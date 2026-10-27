@@ -51,7 +51,7 @@ O ESP32 não deverá controlar diretamente os atuadores ligados ao Arduino. Os c
 
 Painel Web
     |
-    | QMTP / interface web
+    | MQTT / interface web
     v
 ESP32
     |
