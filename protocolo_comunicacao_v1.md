@@ -51,7 +51,7 @@ O ESP32 não deverá controlar diretamente os atuadores ligados ao Arduino. Os c
 
 Painel Web
     |
-    | HTTP / interface web
+    | QMTP / interface web
     v
 ESP32
     |
@@ -107,15 +107,15 @@ Exemplo:
 
 4.1. Campos padronizados
 
-Campo	Tipo	Obrigatório	Descrição
-v	String	Sim	Versão do protocolo
-type	String	Sim	Categoria da mensagem
-id	String	Conforme o tipo	Identificador único da mensagem ou solicitação
-source	String	Sim	Dispositivo que originou a mensagem
-action	String	Em comandos	Ação solicitada
-data	Objeto	Conforme o tipo	Dados associados à mensagem
-status	String	Em respostas de execução	Estado da operação
-error	Objeto	Em mensagens de erro	Informações sobre a falha
+Campo	    Tipo	    Obrigatório	        Descrição
+v	        String	    Sim	                Versão do protocolo
+type	    String	    Sim	                Categoria da mensagem
+id	        String	    Conforme o tipo	    Identificador único da mensagem ou solicitação
+source	    String	    Sim	                Dispositivo que originou a mensagem
+action	    String	    Em comandos	        Ação solicitada
+data	    Objeto	    Conforme o tipo	    Dados associados à mensagem
+status	    String	    Em resp. de exec.	Estado da operação
+error	    Objeto	    Em mensa. de erro	Informações sobre a falha
 
 Os campos específicos de cada tipo de mensagem serão detalhados nas próximas seções. Campos não definidos neste documento não deverão ser utilizados sem alinhamento entre os responsáveis pelos firmwares.
 
@@ -148,13 +148,13 @@ Não se deve presumir que uma chamada de leitura serial corresponderá a uma men
 
 Serão utilizados os seguintes tipos iniciais:
 
-Tipo	Finalidade
-command	Solicitar uma ação ao dispositivo receptor
-ack	Confirmar o recebimento e a aceitação inicial de uma solicitação
+Tipo	    Finalidade
+command	    Solicitar uma ação ao dispositivo receptor
+ack	        Confirmar o recebimento e a aceitação inicial de uma solicitação
 response	Informar o resultado de uma solicitação
 telemetry	Transmitir leituras e estados dos módulos
-event	Informar uma ocorrência relevante do sistema
-error	Informar uma falha de comunicação ou processamento
+event	    Informar uma ocorrência relevante do sistema
+error	    Informar uma falha de comunicação ou processamento
 
 A confirmação ack não significa necessariamente que a operação física foi concluída. A conclusão deverá ser comunicada por uma response ou por um evento definido para a operação.
 
@@ -164,13 +164,13 @@ A confirmação ack não significa necessariamente que a operação física foi 
 
 Os comandos a seguir constituem a proposta inicial do protocolo.
 
-Comando (action)	Finalidade	Destino
-get_status	Consultar o estado geral do sistema	Arduino
-get_telemetry	Solicitar as leituras disponíveis	Arduino
-feed_manual	Solicitar alimentação manual	Arduino
-water_manual	Solicitar reposição manual de água	Arduino
-ack_cleaning	Confirmar a realização da limpeza	Arduino
-set_schedule	Configurar horários de funcionamento	Arduino, após definição dos parâmetros
+Comando (action)	Finalidade	                            Destino
+get_status	        Consultar o estado geral do sistema	    Arduino
+get_telemetry	    Solicitar as leituras disponíveis	    Arduino
+feed_manual	        Solicitar alimentação manual	        Arduino
+water_manual	    Solicitar reposição manual de água	    Arduino
+ack_cleaning	    Confirmar a realização da limpeza	    Arduino
+set_schedule	    Configurar horários de funcionamento	Arduino, após definição dos parâmetros
 
 Os comandos de acionamento deverão ser tratados como solicitações, não como ordens incondicionais. O Arduino poderá recusá-los se houver uma condição insegura, uma operação em andamento ou uma falha relevante.
 
@@ -365,17 +365,17 @@ Arduino → ESP32
 
 Códigos iniciais sugeridos:
 
-Código	Significado
-INVALID_JSON	Mensagem JSON inválida
-UNKNOWN_COMMAND	Comando não reconhecido
-INVALID_PARAMETER	Parâmetro inválido
-BUSY	Módulo ocupado
-SAFETY_BLOCK	Operação impedida por segurança
+Código	                Significado
+INVALID_JSON	        Mensagem JSON inválida
+UNKNOWN_COMMAND	        Comando não reconhecido
+INVALID_PARAMETER	    Parâmetro inválido
+BUSY	                Módulo ocupado
+SAFETY_BLOCK	        Operação impedida por segurança
 WEIGHT_SENSOR_FAILURE	Falha no sensor de peso
 WATER_SENSOR_FAILURE	Falha no sensor de água
-ACTUATOR_TIMEOUT	Atuador excedeu o tempo máximo
-RTC_FAILURE	Falha no relógio de tempo real
-UNSUPPORTED_VERSION	Versão de protocolo incompatível
+ACTUATOR_TIMEOUT	    Atuador excedeu o tempo máximo
+RTC_FAILURE	            Falha no relógio de tempo real
+UNSUPPORTED_VERSION	    Versão de protocolo incompatível
 
 Os códigos deverão ser usados de forma consistente. A mensagem textual serve para diagnóstico; a lógica do sistema deverá depender principalmente do código.
 
