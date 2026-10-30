@@ -404,10 +404,10 @@ Gerencia a escrita no LCD 16x2, leitura com *debounce* dos botões físicos e at
 Calcula a contagem de tempo regressivo para higienização, dispara alertas locais e digitais após o prazo limite e processa as confirmações de limpeza salvando-as de forma não volátil.
 
 ### **11.10. Comunicacao.h/.cpp**
-Gerencia a camada física e buffers da UART Serial1 do Arduino Mega, implementando recepção por interrupção ou pooling rápido delimitado por quebra de linha (`\n`).
+Gerencia a camada física e buffers da UART Serial1 do Arduino Mega, implementando recepção por interrupção ou pooling rápido delimitado por quebra de linha (`\n`). A estrutura das mensagens, tipos de pacotes, convenções de validação e regras de tratamento de erros são definidas no documento complementar [SmartBird – Protocolo de Comunicação](./protocolo_comunicacao_v1.md).
 
 ### **11.11. Protocolo.h/.cpp**
-Interpreta strings JSON recebidas através do Comunicacao, valida a conformidade das chaves e formata os objetos JSON de telemetria e resposta para envio ao ESP32.
+Interpreta strings JSON recebidas através do módulo Comunicacao, valida a conformidade das chaves e formata os objetos JSON de telemetria e resposta para envio ao ESP32. O comportamento esperado, os tipos de mensagem (command, ack, response, telemetry, event e error) e os exemplos de payloads são definidos no documento complementar [SmartBird – Protocolo de Comunicação](./protocolo_comunicacao_v1.md), considerado a referência oficial do contrato entre os sistemas.
 
 ### **11.12. Arquivos auxiliares e bibliotecas**
 Dependências externas recomendadas para o Arduino Mega:
@@ -433,16 +433,16 @@ O repositório do painel web hospedado reúne os arquivos essenciais para execu�
 
 ## **12. Comunicação por JSON entre Arduino e ESP32**
 
-As mensagens trocadas entre os controladores utilizam representações estruturadas em formato JSON, transmitidas sequencialmente linha a linha, empregando o caractere delimitador `\n`.
+Esta seção apresenta uma visão geral da comunicação entre Arduino Mega e ESP32. A especificação detalhada das mensagens, regras de validação, estados operacionais, códigos de erro, exemplos completos de payloads JSON e critérios de compatibilidade entre versões encontra-se documentada em [SmartBird – Protocolo de Comunicação](./protocolo_comunicacao_v1.md), documento complementar mantido separadamente para facilitar sua evolução independente da arquitetura geral.
 
 ### **12.1. Exemplo de comando**
 Formato de solicitação de alimentação manual originada pela nuvem ou interface digital:
 ```json
-{"type":"command","id":"cmd-001","name":"feed_manual"}
+{"v":"1.0","type":"command","id":"cmd-001","source":"esp32","action":"feed_manual"}
 ```
 - `type`: identifica a classe funcional da mensagem.
 - `id`: identificador de rastreabilidade único, permitindo emparelhar uma resposta futura ao comando originário.
-- `name`: mnemônico da operação solicitada.
+- `action`: mnemônico da operação solicitada.
 
 ### **12.2. Tipos de mensagem previstos**
 | Tipo | Descrição e Finalidade |
@@ -646,25 +646,104 @@ Todos os mecanismos de dosagem e corte de ração devem ser projetados para evit
 
 ---
 
-## **20. Organização dos documentos técnicos**
+# 20. Organização dos Documentos Técnicos
 
-A documentação de engenharia do projeto é organizada em três volumes complementares:
+A documentação do SmartBird é organizada em documentos independentes e complementares, cada um responsável por um aspecto específico da engenharia do projeto. Essa separação facilita a manutenção da documentação, reduz conflitos durante o desenvolvimento em equipe e permite a evolução de componentes do sistema sem a necessidade de alterar documentos não relacionados.
 
-### **20.1. Documento de visão geral e arquitetura**
-O presente material, cobrindo o escopo funcional, a fundamentação teórica de operação, o particionamento de módulos de software, o protocolo JSON, a estrutura MQTT na nuvem e as rotinas de tratamento de falhas.
-
-### **20.2. Documento de ligações elétricas**
-Representação esquemática do circuito elétrico contendo barramentos de alimentação de 5V e 3.3V, transistores de acionamento, diodos de proteção, conversores de nível lógico e ligações dos módulos sensores.
-
-### **20.3. Documento de mapa de pinos e alimentação**
-Tabela detalhada consolidando o mapeamento de pinagem física (*pinout*) do microcontrolador:
-- Atribuição de pinos para barramentos compartilhados (I²C: SDA/SCL).
-- Canais dedicados de comunicação serial UART1 (Pinos 18 e 19).
-- Entradas digitais com resistores de *pull-up* ativados para botões físicos.
-- Saídas de sinal PWM para o servo motor e pulsos lógicos de gatilho para os sensores ultrassônicos.
-- Balanço energético indicando o consumo de corrente estimado de cada periférico e o ponto de extração de alimentação (barramento da fonte externa vs. barramento regulado da placa).
+Os documentos devem permanecer sincronizados sempre que houver alterações relevantes de arquitetura, hardware, software ou protocolo de comunicação.
 
 ---
+
+## 20.1. Documento Mestre do Projeto
+
+Este documento constitui a referência principal do projeto SmartBird.
+
+Seu objetivo é consolidar a visão geral da solução, os requisitos funcionais e não funcionais, a arquitetura do sistema, a divisão de responsabilidades entre os controladores, os módulos de software, as estratégias de desenvolvimento, testes e manutenção.
+
+Entre os tópicos abrangidos estão:
+
+- Visão geral do projeto.
+- Escopo funcional.
+- Arquitetura Arduino Mega + ESP32.
+- Organização dos módulos de software.
+- Estratégia de integração.
+- Regras de segurança.
+- Fluxos operacionais.
+- Planejamento de desenvolvimento.
+- Estratégia de validação e demonstração.
+
+Este documento deve ser utilizado como referência para compreender o funcionamento global do SmartBird.
+
+---
+
+## 20.2. Documento de Protocolo de Comunicação
+
+A especificação detalhada da comunicação entre os componentes do sistema encontra-se no documento complementar:
+
+**[SmartBird – Protocolo de Comunicação](./protocolo_comunicacao_v1.md)**
+
+Este documento define formalmente o contrato de comunicação utilizado entre o Arduino Mega 2560, o ESP32 e as camadas externas de supervisão.
+
+Entre os tópicos documentados estão:
+
+- Estrutura das mensagens JSON.
+- Tipos de mensagem (`command`, `ack`, `response`, `telemetry`, `event` e `error`).
+- Comandos suportados.
+- Formato dos dados de telemetria.
+- Estados operacionais dos módulos.
+- Códigos de erro padronizados.
+- Regras de validação.
+- Tratamento de falhas de comunicação.
+- Controle de versão do protocolo.
+
+Qualquer alteração na estrutura dos pacotes JSON, nomenclatura de campos, estados ou comandos deverá ser registrada neste documento antes de ser incorporada aos firmwares.
+
+O Documento de Protocolo deve ser tratado como a referência oficial para todas as implementações relacionadas à troca de dados entre os sistemas.
+
+---
+
+## 20.3. Documento de Ligações Elétricas
+
+Este documento reúne os esquemas elétricos do protótipo e descreve a interligação física entre os componentes eletrônicos.
+
+Seu conteúdo inclui:
+
+- Barramentos de alimentação.
+- Ligações dos sensores.
+- Circuitos de acionamento dos atuadores.
+- Conversores de nível lógico.
+- Proteções elétricas.
+- Referências de aterramento (GND).
+- Conexões UART entre Arduino Mega e ESP32.
+- Conexões dos módulos I²C.
+- Distribuição das fontes de alimentação.
+
+Este documento deve ser utilizado durante a montagem física e manutenção do protótipo.
+
+---
+
+## 20.4. Documento de Mapa de Pinos e Alimentação
+
+Este documento consolida o mapeamento completo dos recursos de hardware utilizados pelos microcontroladores.
+
+Entre os itens documentados estão:
+
+- Associação entre sensores e pinos.
+- Associação entre atuadores e pinos.
+- Barramentos compartilhados.
+- Interfaces seriais utilizadas.
+- Pinos reservados para expansão futura.
+- Consumo estimado de corrente por módulo.
+- Tensão de operação dos dispositivos.
+- Origem da alimentação de cada componente.
+
+Também deverá registrar os recursos utilizados pelo ESP32 e pelo Arduino Mega para evitar conflitos de hardware durante a integração dos módulos desenvolvidos em paralelo.
+
+---
+
+## 20.5. Relação Entre os Documentos
+
+Os documentos técnicos devem ser interpretados de forma complementar:
 
 ## **21. Apresentação acadêmica e demonstração do protótipo**
 
