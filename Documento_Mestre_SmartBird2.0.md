@@ -1,6 +1,6 @@
 # **SMARTBIRD**
 
-# **Documento Mestre do Projeto — Versão 2.0**
+# **Documento Mestre do Projeto — Versão 2.1**
 
 Arquitetura, funcionamento, requisitos, desenvolvimento e integração do sistema
 
@@ -127,8 +127,8 @@ A serial USB principal do Arduino poderá continuar disponível para depuração
 
 ### **3.4. Arquitetura de Nuvem e Internet das Coisas (IoT)**
 A arquitetura de comunicação remota do SmartBird é baseada no protocolo MQTT (Message Queuing Telemetry Transport), utilizando o modelo Publicador-Inscrito para garantir comunicação leve e em tempo real. O fluxo de informações funcionará em quatro etapas independentes: **Painel Web (Celular/PC) ➔ Broker MQTT (Nuvem) ➔ ESP32 (Wi-Fi) ➔ Arduino Mega 2560 (UART)**.
-- **Broker MQTT:** O servidor central será o **HiveMQ Cloud** (plano gratuito), responsável por receber as mensagens do site e repassá-las instantaneamente ao ESP32, suportando múltiplas conexões sem travamentos.
-- **Autenticação:** O acesso ao Broker exige credenciais (usuário e senha configurados no HiveMQ), garantindo que apenas os tutores autorizados acessem os tópicos de comando da gaiola.
+- **Broker MQTT:** O servidor central será o **EMQX Broker** (plano Cloud/Serverless), responsável por receber as mensagens do site e repassá-las instantaneamente ao ESP32, suportando múltiplas conexões sem travamentos.
+- **Autenticação:** O acesso ao Broker exige credenciais (usuário e senha configurados no EMQX), garantindo que apenas os tutores autorizados acessem os tópicos de comando da gaiola.
 
 ---
 
@@ -353,9 +353,9 @@ A interface digital funcionará como um **Painel Web Responsivo**, hospedado na 
 A interface será construída em HTML5, CSS3 (com frameworks como Bootstrap ou Tailwind para responsividade mobile) e JavaScript. Ela exibirá o estado do sistema, alertas de manutenção pendente e níveis de reservatório em tempo real.
 
 ### **10.2. Conexão Web-Nuvem (Assincronia)**
-O JavaScript utilizará a biblioteca **Paho MQTT** para se conectar via WebSockets ao HiveMQ Cloud. A interface adotará o princípio de execução assíncrona:
+O JavaScript utilizará a biblioteca **Paho MQTT** para se conectar via WebSockets ao **EMQX Broker**. A interface adotará o princípio de execução assíncrona:
 1. Ao solicitar uma ação (ex: "Alimentar"), o botão exibirá um indicador de carregamento (status *running*).
-2. A tela só apresentará a mensagem de sucesso (*completed*) quando o painel receber, via MQTT, a resposta (*response*) gerada fisicamente pelo Arduino Mega.
+2. A tela só apresentará a mensagem de sucesso (*completed*) quando o painel receber, via MQTT, a resposta (*response*) originada no sistema embarcado.
 
 ### **10.3. Parâmetros configuráveis**
 - Horários programados de alimentação e hidratação.
@@ -365,7 +365,7 @@ O JavaScript utilizará a biblioteca **Paho MQTT** para se conectar via WebSocke
 - Tempos máximos de acionamento contínuo dos atuadores.
 
 ### **10.4. Validação e armazenamento**
-Qualquer alteração submetida pela interface web passará por checagem de limites operacionais aceitáveis antes da persistência. O ESP32 funciona como canal de entrada do formulário, transmitindo os dados ao Arduino Mega para consolidação e aplicação nas rotinas de segurança local.
+Qualquer alteração submetida pela interface web passará por checagem de limites operacionais aceitáveis antes da persistência. O ESP32 funciona como canal de entrada do formulário, traduzindo e transmitindo os dados ao Arduino Mega para consolidação e aplicação nas rotinas de segurança local.
 
 ### **10.5. Funcionamento sem conexão**
 A interface web é estritamente uma camada de supervisão e conveniência. Se a rede Wi-Fi cair ou o ESP32 for reiniciado, o Arduino Mega continuará cumprindo autonomamente os ciclos de alimentação, controle de nível de água e acionamento dos alertas sonoros e visuais locais.
@@ -403,25 +403,25 @@ Gerencia a escrita no LCD 16x2, leitura com *debounce* dos botões físicos e at
 ### **11.9. Manutencao.h/.cpp**
 Calcula a contagem de tempo regressivo para higienização, dispara alertas locais e digitais após o prazo limite e processa as confirmações de limpeza salvando-as de forma não volátil.
 
-### **11.10. Comunicacao.h/.cpp**
-Gerencia a camada física e buffers da UART Serial1 do Arduino Mega, implementando recepção por interrupção ou pooling rápido delimitado por quebra de linha (`\n`). A estrutura das mensagens, tipos de pacotes, convenções de validação e regras de tratamento de erros são definidas no documento complementar [SmartBird – Protocolo de Comunicação](./protocolo_comunicacao_v1.md).
+### **11.10. Comunicacao.h/.cpp (Arduino Mega)**
+Gerencia a camada física e buffers da UART Serial1 do Arduino Mega. Diferente de versões anteriores, este módulo agora espera receber strings curtas e simples (ex: `CMD:FEED`) vindas do ESP32, e transmite respostas padronizadas sem a sobrecarga de formatação complexa.
 
-### **11.11. Protocolo.h/.cpp**
-Interpreta strings JSON recebidas através do módulo Comunicacao, valida a conformidade das chaves e formata os objetos JSON de telemetria e resposta para envio ao ESP32. O comportamento esperado, os tipos de mensagem (command, ack, response, telemetry, event e error) e os exemplos de payloads são definidos no documento complementar [SmartBird – Protocolo de Comunicação](./protocolo_comunicacao_v1.md), considerado a referência oficial do contrato entre os sistemas.
+### **11.11. Protocolo.h/.cpp (Arduino Mega)**
+Interpreta comandos em texto simples recebidos através do módulo Comunicacao em vez de lidar com a deserialização de JSON complexo, aliviando o processamento e a memória do Arduino Mega. Ele identifica a palavra-chave recebida e delega a ação ao respectivo módulo operacional.
 
-### **11.12. Arquivos auxiliares e bibliotecas**
+### **11.12. Arquivos auxiliares e bibliotecas (Arduino Mega)**
 Dependências externas recomendadas para o Arduino Mega:
-- `ArduinoJson`: serialização e desserialização rápida de pacotes JSON.
 - `RTClib`: abstração e controle do módulo DS3231 via I²C.
 - `LiquidCrystal_I2C` ou `LiquidCrystal`: interface com display de caracteres.
 - `Servo`: controle de pulso PWM para movimentação angular do servo motor.
 - `HX711`: comunicação serial síncrona com amplificador de célula de carga.
+*(Nota: A biblioteca `ArduinoJson` foi movida para as dependências exclusivas do ESP32).*
 
-### **11.13. ESP32: Comunicação Wi-Fi e Ponte MQTT**
-O firmware do ESP32 terá responsabilidades estritas de rede e conectividade, abstendo-se de comandar diretamente os atuadores da gaiola. Seu projeto na IDE Arduino é dividido em três blocos operacionais:
+### **11.13. ESP32: Comunicação Wi-Fi, MQTT e Tradução de Protocolo**
+O firmware do ESP32 agora atua como o **cérebro da comunicação externa**, poupando o Arduino Mega de rotinas de rede e decodificação estruturada. Seu projeto na IDE Arduino é dividido em três blocos operacionais:
 - **WiFi_Manager:** gerencia a conexão e reconexão automática com a rede Wi-Fi local de 2.4 GHz.
-- **MQTT_Client:** faz uso da biblioteca `PubSubClient` para estabelecer e manter a conexão TLS segura com o HiveMQ Cloud, gerenciando o ciclo de vida das inscrições de tópicos.
-- **UART_Bridge:** funciona como ponte bidirecional. Mensagens JSON recebidas dos tópicos MQTT da nuvem são imediatamente impressas na porta Serial conectada ao Arduino Mega via `Serial.println()`. Em sentido inverso, mensagens JSON completas recebidas do Mega via UART são publicadas nos tópicos de telemetria e resposta da nuvem.
+- **MQTT_Client:** faz uso da biblioteca `PubSubClient` para estabelecer e manter a conexão TLS segura com o **EMQX Broker**, gerenciando o ciclo de vida das inscrições de tópicos.
+- **Data_Translator (Ponte Inteligente):** utiliza a biblioteca `ArduinoJson` para ler as mensagens complexas da nuvem, extrair os comandos pertinentes (ex: campo `action`) e repassar via UART apenas comandos curtos em texto limpo para o Mega (ex: `ALIMENTAR`). No sentido inverso, recebe os estados simples do Mega pela UART e os empacota em um JSON bem formatado antes de publicar na nuvem.
 
 ### **11.14. Painel Web: Organização do Código Backend e Frontend**
 O repositório do painel web hospedado reúne os arquivos essenciais para execução no navegador:
@@ -431,48 +431,44 @@ O repositório do painel web hospedado reúne os arquivos essenciais para execu�
 
 ---
 
-## **12. Comunicação por JSON entre Arduino e ESP32**
+## **12. Comunicação JSON (Nuvem) e Protocolo UART Simplificado**
 
-Esta seção apresenta uma visão geral da comunicação entre Arduino Mega e ESP32. A especificação detalhada das mensagens, regras de validação, estados operacionais, códigos de erro, exemplos completos de payloads JSON e critérios de compatibilidade entre versões encontra-se documentada em [SmartBird – Protocolo de Comunicação](./protocolo_comunicacao_v1.md), documento complementar mantido separadamente para facilitar sua evolução independente da arquitetura geral.
+A arquitetura de comunicação foi refinada para garantir máxima eficiência de processamento local (Arduino Mega) combinada com flexibilidade de dados remotos (Nuvem). 
+O **JSON** é utilizado estritamente para o tráfego MQTT (Internet ➔ ESP32), enquanto a comunicação no cabo físico (ESP32 ➔ Mega) utiliza **strings curtas padronizadas**.
 
-### **12.1. Exemplo de comando**
-Formato de solicitação de alimentação manual originada pela nuvem ou interface digital:
+### **12.1. Exemplo de comando (Visão Nuvem / MQTT)**
+Formato de solicitação de alimentação manual originada pelo Painel Web e enviada ao Broker EMQX:
 ```json
-{"v":"1.0","type":"command","id":"cmd-001","source":"esp32","action":"feed_manual"}
+{"v":"1.1","type":"command","id":"cmd-001","source":"web","action":"feed_manual"}
 ```
 - `type`: identifica a classe funcional da mensagem.
 - `id`: identificador de rastreabilidade único, permitindo emparelhar uma resposta futura ao comando originário.
 - `action`: mnemônico da operação solicitada.
 
-### **12.2. Tipos de mensagem previstos**
+*(O ESP32 receberá este JSON, fará o parse e enviará apenas algo como `CMD:FEED` na porta UART para o Arduino Mega).*
+
+### **12.2. Tipos de mensagem e eventos previstos**
 | Tipo | Descrição e Finalidade |
 | :--- | :--- |
 | `command` | Dispara ações mecânicas ou solicita atualização de configurações operacionais. |
-| `ack` | Confirma o recebimento imediato e a integridade sintática da mensagem. |
-| `response` | Retorna o resultado final de processamento de um comando (ex: sucesso ou recusa por trava de segurança). |
-| `telemetry` | Pacote periódico contendo leituras de nível, status de atuadores e horários do sistema. |
-| `event` | Comunicações assíncronas pontuais (ex: término de abastecimento, alerta de limpeza vencida). |
-| `error` | Informa inconsistência estrutural no JSON recebido ou parâmetro fora da faixa aceita. |
+| `ack` | Confirma o recebimento e validação estrutural da mensagem. |
+| `response` | Retorna o resultado final de processamento de um comando (ex: sucesso ou recusa). |
+| `telemetry` | Pacote periódico contendo leituras de nível e status gerado pelo ESP32 com base nos dados brutos do Mega. |
+| `error` | Informa falha de validação ou processamento (tratado pelo ESP32 ou sinalizado pelo Mega). |
 
-### **12.3. Recepção e validação**
-O subsistema de recepção acumula bytes em buffer linear até encontrar o caractere `\n`. Em seguida, o buffer é processado pela biblioteca de JSON.
-O sistema trata falhas como:
-- Mensagens com estouro de tamanho máximo de buffer (*overflow*).
-- Strings com JSON malformado ou chaves truncadas.
-- Ausência de chaves obrigatórias (`type`, `id`).
-- Comandos desconhecidos ou comandos fora dos limites aceitáveis.
+### **12.3. Recepção e validação inteligente**
+O ESP32 atua como escudo validador. Se um pacote com JSON malformado, chaves truncadas ou ausência de chaves obrigatórias for recebido do Broker, a mensagem é imediatamente descartada pelo módulo `Data_Translator` do ESP32, sem nunca chegar a incomodar ou travar o Arduino Mega. 
 
 ### **12.4. Segurança lógica dos comandos**
-Um pacote JSON válido não autoriza o acionamento cego de atuadores. Após a decodificação da mensagem, o módulo de protocolo despacha a requisição ao módulo operacional específico (`Alimentacao` ou `Hidratacao`). Se o reservatório de ração estiver vazio ou a bomba d'água atingir o limite de tempo contínuo, o comando será formalmente recusado e uma resposta de erro será despachada de volta à nuvem.
+A passagem pelo validador do ESP32 não garante autorização irrestrita de execução. Após o Arduino Mega receber o gatilho simplificado, ele despacha a requisição aos seus módulos operacionais de segurança (`Alimentacao` ou `Hidratacao`). Se o reservatório de ração estiver vazio ou a bomba d'água atingir o limite de tempo contínuo, a execução é bloqueada e um alerta é devolvido.
 
 ### **12.5. Atualizações de estado**
-O Arduino transmite ciclicamente pacotes de telemetria refletindo o estado dos sensores e atuadores. A interface web utiliza essas atualizações para atualizar elementos visuais na tela. Caso a telemetria não seja recebida dentro de um período pré-definido, a interface marcará os dados em tela como desatualizados.
+O Arduino Mega transmite ciclicamente um pacote enxuto de telemetria bruta pela UART. O ESP32 intercepta essas variáveis, compõe o corpo formatado em JSON e as publica na nuvem. A interface web consome esses dados para atualizar elementos visuais na tela.
 
-### **12.6. Tópicos MQTT e a ponte de dados**
-O protocolo JSON trafegado na UART entre Arduino e ESP32 possui exatamente a mesma estrutura enviada aos tópicos MQTT da nuvem, eliminando a sobrecarga de tradução de dados no ESP32.
-O Broker organiza o tráfego em dois canais principais:
-- **Tópico de Comandos (`smartbird/gaiola01/comandos`):** o Painel Web publica comandos JSON neste canal. O ESP32, inscrito permanentemente no tópico, repassa o payload integralmente via UART ao Arduino Mega.
-- **Tópico de Telemetria (`smartbird/gaiola01/status`):** o Arduino Mega formata as medições e status operacionais em JSON e os envia ao ESP32 via UART. O ESP32 os publica neste canal. O Painel Web consome os dados e atualiza a interface do usuário em tempo real.
+### **12.6. Tópicos MQTT e a separação de dados**
+O Broker EMQX organiza o tráfego em dois canais principais:
+- **Tópico de Comandos (`smartbird/gaiola01/comandos`):** o Painel Web publica comandos JSON neste canal. O ESP32 é o único inscrito neste tópico para interagir com o dispositivo.
+- **Tópico de Telemetria (`smartbird/gaiola01/status`):** o ESP32 publica as medições, as respostas e os alertas de manutenção da gaiola neste canal. O Painel Web consome os dados e atualiza a interface do usuário em tempo real.
 
 ---
 
@@ -500,7 +496,7 @@ Caso as condições operacionais e de intertravamento de segurança sejam cumpri
 ### **13.5. Atualização das interfaces**
 As informações consolidadas são despachadas simultaneamente:
 - A interface física exibe as leituras no display LCD 16x2 e atualiza o estado dos LEDs indicadores.
-- A interface serial transmite o frame de dados em JSON ao ESP32, que o encaminha ao broker MQTT para exibição no painel web.
+- A interface serial transmite os dados simplificados ao ESP32, que forma o JSON e os envia ao EMQX Broker para exibição no painel web.
 
 ---
 
@@ -540,7 +536,7 @@ A estrutura mecânica externa será montada em placas de MDF cortadas a laser, c
 ### **15.5. Conectividade Wi-Fi e Estratégia de Apresentação**
 O módulo ESP32 exige uma rede Wi-Fi estável na frequência de 2.4 GHz para dialogar com a nuvem e viabilizar a interface web.
 - **Bloqueios de Rede:** Redes corporativas e universitárias frequentemente utilizam firewalls restritivos ou portais cativos de autenticação web. Como o ESP32 não conta com navegador interno para cumprir etapas de login manual, a tentativa de conexão com brokers MQTT na nuvem por essas redes pode ser bloqueada.
-- **Ambiente de Demonstração (Banca Avaliadora):** Para garantir estabilidade técnica durante a demonstração prática perante a banca acadêmica, o ESP32 será configurado previamente para conectar-se exclusivamente a uma rede de ponto de acesso portátil (*Hotspot 4G/5G*) originada pelo smartphone de um dos membros da equipe. Essa estratégia assegura conexão livre de firewalls, garante baixa latência e comprova o controle remoto real, permitindo que os próprios avaliadores acionem a gaiola a partir de seus celulares por meio da rede externa.
+- **Ambiente de Demonstração (Banca Avaliadora):** Para garantir estabilidade técnica durante a demonstração prática perante a banca acadêmica, o ESP32 será configurado previamente para conectar-se exclusivamente a uma rede de ponto de acesso portátil (*Hotspot 4G/5G*) originada pelo smartphone de um dos membros da equipe. Essa estratégia assegura conexão livre de firewalls, comunicação imediata com o **EMQX Broker**, garante baixa latência e comprova o controle remoto real, permitindo que os próprios avaliadores acionem a gaiola a partir de seus celulares por meio da rede externa.
 - **Adequação de Tensão de Hardware:** É obrigatório o emprego de um **Módulo Conversor de Nível Lógico Bidirecional (3.3V – 5V)** entre a porta Serial1 do Arduino Mega (5V) e os pinos de recepção UART do ESP32 (3.3V). O envio de pulsos diretos de 5V do Mega ao ESP32 pode danificar o módulo de conectividade ou comprometer a integridade dos dados trafegados.
 
 ---
@@ -573,7 +569,7 @@ main
 6. Mesclagem (*merge*) aprovada após confirmação de não quebra dos contratos e módulos existentes.
 
 ### **16.4. Contratos entre módulos**
-Antes de iniciar a codificação isolada das rotinas, a equipe deve formalizar o cabeçalho compartilhado `EstadoSmartBird.h` e o dicionário de dados JSON do protocolo. Isso garante que a representação de dados (ex: percentual de 0 a 100 em vez de níveis em centímetros) seja uniforme em todo o sistema.
+Antes de iniciar a codificação isolada das rotinas, a equipe deve formalizar o cabeçalho compartilhado `EstadoSmartBird.h` e o dicionário de dados da ponte de comunicação. Isso garante que a representação de dados (ex: percentual de 0 a 100 em vez de níveis em centímetros) seja uniforme em todo o sistema.
 
 ---
 
@@ -600,7 +596,7 @@ Implementação individual de cada arquivo funcional do firmware, simulando entr
 Junção dos módulos operacionais no Arduino Mega. Validação do escalonador não bloqueante garantindo que a varredura contínua de segurança não seja interrompida durante acionamentos mecânicos.
 
 ### **17.5. Etapa 5 — Integração com o ESP32 e Nuvem**
-Conexão física da UART adaptada (Mega-ESP32), conexão Wi-Fi do ESP32 via Hotspot de teste e estabelecimento da sessão MQTT com o HiveMQ Cloud. Validação do envio de telemetria em formato JSON e recepção de comandos pela ponte UART.
+Conexão física da UART adaptada (Mega-ESP32), conexão Wi-Fi do ESP32 via Hotspot de teste e estabelecimento da sessão MQTT com o **EMQX Broker**. Validação do módulo `Data_Translator` do ESP32 para parsing do JSON da nuvem e envio dos comandos simples de sucesso/falha para o Arduino Mega.
 
 ### **17.6. Etapa 6 — Testes integrados**
 Execução de rotinas completas simulando o ciclo de operação diário: alimentação por timer do RTC, esgotamento do nível de reservatório, timeout de proteção de bomba d'água e interrupção proposital da rede Wi-Fi.
@@ -678,27 +674,21 @@ Este documento deve ser utilizado como referência para compreender o funcioname
 
 ## 20.2. Documento de Protocolo de Comunicação
 
-A especificação detalhada da comunicação entre os componentes do sistema encontra-se no documento complementar:
+A especificação detalhada da comunicação externa via nuvem (JSON) encontra-se no documento complementar:
 
 **[SmartBird – Protocolo de Comunicação](./protocolo_comunicacao_v1.md)**
 
-Este documento define formalmente o contrato de comunicação utilizado entre o Arduino Mega 2560, o ESP32 e as camadas externas de supervisão.
+Este documento define formalmente o contrato de dados utilizado pelo ESP32 e a Aplicação Web, bem como as traduções locais repassadas ao Arduino Mega.
 
 Entre os tópicos documentados estão:
 
-- Estrutura das mensagens JSON.
+- Estrutura das mensagens JSON do MQTT.
 - Tipos de mensagem (`command`, `ack`, `response`, `telemetry`, `event` e `error`).
-- Comandos suportados.
-- Formato dos dados de telemetria.
-- Estados operacionais dos módulos.
+- Padrão do mapeamento para as mensagens de texto plano na UART.
 - Códigos de erro padronizados.
-- Regras de validação.
-- Tratamento de falhas de comunicação.
-- Controle de versão do protocolo.
+- Regras de validação feitas no ESP32.
 
-Qualquer alteração na estrutura dos pacotes JSON, nomenclatura de campos, estados ou comandos deverá ser registrada neste documento antes de ser incorporada aos firmwares.
-
-O Documento de Protocolo deve ser tratado como a referência oficial para todas as implementações relacionadas à troca de dados entre os sistemas.
+O Documento de Protocolo deve ser tratado como a referência oficial para a equipe que trabalha na Nuvem (Web) e no Módulo ESP32.
 
 ---
 
@@ -754,7 +744,7 @@ O projeto acadêmico deve ser apresentado com foco na justificativa de engenhari
 - Mecânica de cálculo da conversão de distância ultrassônica em estimativa percentual de volume.
 - Justificativa da arquitetura em dois níveis (Arduino Mega para controle local de tempo real + ESP32 para conectividade).
 - Papel do conversor de nível lógico (3.3V – 5V) na segurança dos pinos de comunicação serial.
-- Funcionamento do modelo Publicador/Inscrito via MQTT através do broker HiveMQ Cloud.
+- Funcionamento do modelo Publicador/Inscrito via MQTT através do broker EMQX.
 - Procedimento de contingência para redes restritas por meio de Hotspot móvel 4G/5G.
 
 ### **21.2. Viabilidade técnica**
@@ -764,7 +754,7 @@ A separação de responsabilidades comprova que o sistema não depende de conex�
 1. Exibição da leitura dos reservatórios no display LCD 16x2 da bancada física.
 2. Alteração de nível controlada no reservatório com atualização automática dos dados no LCD.
 3. Demonstração da transmissão do pacote de telemetria via MQTT, atualizando o painel web em tempo real.
-4. Acionamento do botão "Alimentar" no painel web do smartphone, demonstrando o ciclo: envio MQTT ➔ recepção no ESP32 ➔ repasse via UART ➔ validação e movimentação do servo pelo Arduino Mega.
+4. Acionamento do botão "Alimentar" no painel web do smartphone, demonstrando o ciclo: envio MQTT ➔ parsing JSON no ESP32 ➔ repasse via UART ➔ validação e movimentação do servo pelo Arduino Mega.
 5. Retorno visual de status *completed* na tela do smartphone após a conclusão do movimento.
 6. Simulação de desconexão da rede sem interrupção das rotinas locais do Arduino Mega.
 
@@ -789,5 +779,5 @@ A estrutura desacoplada em módulos viabiliza atualizações de software e expan
 ## **23. Conclusão**
 
 O SmartBird consolida uma arquitetura distribuída para o monitoramento e manejo automatizado de aves domésticas, unindo controle em tempo real e supervisão remota via nuvem.
-A distribuição de responsabilidades entre o Arduino Mega 2560 (focado em controle de baixo nível, intertravamentos de segurança e acionamento local) e o ESP32 (responsável pela conectividade Wi-Fi, comunicação MQTT com o HiveMQ Cloud e ponte de dados bidirecional) garante que o sistema mantenha o funcionamento local independente do estado da rede externa.
-A estrutura modular do código-fonte, a padronização das mensagens em formato JSON com campos identificadores (`id`), o isolamento elétrico das linhas de potência e o emprego de técnicas de programação não bloqueante formam a base para o desenvolvimento progressivo e coordenado da equipe ao longo das etapas de montagem, testes de bancada e apresentação acadêmica.
+A distribuição de responsabilidades entre o Arduino Mega 2560 (focado em controle de baixo nível, intertravamentos de segurança e acionamento local) e o ESP32 (responsável pela conectividade Wi-Fi, comunicação MQTT com o EMQX Broker, e tradução inteligente de pacotes JSON para a UART local) garante que o sistema mantenha o funcionamento autônomo independente do estado da rede externa.
+A estrutura modular do código-fonte, a padronização das mensagens nos tópicos (`comandos` e `status`), o isolamento elétrico das linhas de potência e o emprego de técnicas de programação não bloqueante formam a base para o desenvolvimento progressivo e coordenado da equipe ao longo das etapas de montagem, testes de bancada e apresentação acadêmica.
