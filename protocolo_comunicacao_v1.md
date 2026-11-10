@@ -1,210 +1,206 @@
 # SmartBird — Protocolo de Comunicação
 
 **Projeto:** SmartBird  
-**Versão do documento:** 0.1.0  
-**Status:** Proposta inicial — aguardando validação da equipe  
-**Comunicação:** UART entre Arduino Mega 2560 e ESP32  
-**Formato das mensagens:** JSON  
+**Versão:** 0.2.0  
+**Status:** Proposta revisada — sujeita à validação e aos testes de integração  
+**Controlador principal:** Arduino Mega 2560  
+**Ponte de comunicação:** ESP32  
+**Transporte externo:** MQTT  
+**Transporte interno:** UART TTL  
+**Formato:** JSON
 
 ---
 
-## 1. Objetivo
+## 1. Objetivo e escopo
 
-Este documento define o protocolo de comunicação entre o Arduino Mega 2560 e o ESP32 do projeto SmartBird.
+Este documento define o contrato de comunicação entre a Aplicação Web, o broker MQTT, o ESP32 e o Arduino Mega 2560 do SmartBird.
 
-O objetivo é estabelecer um padrão para envio de comandos, recebimento de respostas, transmissão de dados dos sensores e comunicação de erros, permitindo que os dois dispositivos sejam desenvolvidos separadamente e integrados posteriormente.
+São padronizados o encaminhamento de comandos, ACKs, respostas, telemetria, eventos, erros, sincronização do RTC, configuração de agendas e parâmetros operacionais, além do tratamento de falhas e perda de comunicação.
 
-Este protocolo é uma especificação inicial. Os nomes dos campos e comandos deverão ser mantidos consistentes entre os firmwares e atualizados neste documento quando houver alterações aprovadas pela equipe.
-
----
+Os exemplos são ilustrativos. Parâmetros ainda não definidos pelo projeto estão identificados como pendentes de validação. A presença de um comando neste documento define o contrato pretendido, não significa que ele já esteja implementado.
 
 ## 2. Arquitetura da comunicação
 
-O SmartBird será composto por dois microcontroladores com responsabilidades distintas.
+```text
+┌──────────────────┐
+│   Aplicação Web  │
+└────────┬─────────┘
+         │ MQTT
+         ▼
+┌──────────────────┐
+│   Broker MQTT    │
+└────────┬─────────┘
+         │ MQTT / Wi-Fi
+         ▼
+┌──────────────────┐
+│      ESP32       │
+│ Ponte MQTT/UART  │
+└────────┬─────────┘
+         │ UART + JSON + \n
+         ▼
+┌──────────────────┐
+│ Arduino Mega     │
+│ Controle local   │
+└────────┬─────────┘
+         ├── Sensores
+         ├── Servo de alimentação
+         ├── Bomba de água
+         ├── RTC
+         ├── Display
+         └── Avisos sonoros e visuais
+```
 
-### 2.1. Arduino Mega 2560
+### 2.1. Aplicação Web
 
-Responsável pelo controle local do sistema:
+A Web apresenta o estado do equipamento, monta mensagens JSON, publica comandos MQTT, recebe ACKs, respostas, telemetrias, eventos e erros, e correlaciona solicitações por identificador (`id`).
 
-* Leitura dos sensores de peso e nível de água.
-* Controle do servo motor de alimentação.
-* Controle da bomba de água.
-* Gerenciamento das rotinas programadas.
-* Controle dos avisos sonoros e visuais.
-* Validação e execução dos comandos recebidos do ESP32.
-* Envio do estado dos módulos e das leituras dos sensores.
-
-O Arduino deverá continuar executando as funções essenciais mesmo quando o ESP32 ou a conexão Wi-Fi estiver indisponível.
+A Web também obtém a data e o horário de referência e os envia ao Arduino por meio do comando `sync_time`. A aplicação não deverá considerar uma operação concluída apenas porque publicou uma mensagem MQTT.
 
 ### 2.2. ESP32
 
-Responsável pela comunicação e conectividade:
+O ESP32 atua como **ponte transparente MQTT/UART**. Suas responsabilidades são conectar-se ao Wi-Fi e ao broker MQTT, assinar os tópicos destinados ao dispositivo, retransmitir payloads MQTT pela UART e publicar no MQTT os payloads recebidos do Arduino.
 
-* Conexão Wi-Fi.
-* Hospedagem ou integração com o painel web.
-* Recebimento de comandos da interface.
-* Conversão das solicitações em mensagens do protocolo.
-* Envio e recebimento de mensagens JSON pela UART.
-* Encaminhamento de estados, leituras e erros ao painel.
+O ESP32 deverá preservar o conteúdo JSON: não deverá interpretar, reconstruir, alterar campos ou aplicar regras de negócio. Poderá tratar metadados necessários ao transporte, como tópico e estado da conexão, sem modificar o payload.
 
-O ESP32 não deverá controlar diretamente os atuadores ligados ao Arduino. Os comandos deverão ser validados pelo Arduino antes de sua execução.
+O ESP32 não decide se uma operação é segura, não gerencia agendas, não atualiza o RTC por conta própria e não controla diretamente os atuadores.
 
-### 2.3. Fluxo geral
+### 2.3. Arduino Mega 2560
 
-```text
-Painel Web
-    |
-    | MQTT / interface web
-    v
-ESP32
-    |
-    | UART + JSON
-    v
-Arduino Mega 2560
-    |
-    +-- Sensor de peso
-    +-- Sensor de nível de água
-    +-- Servo motor
-    +-- Bomba de água
-    +-- RTC
-    +-- Display e avisos
-```
+O Arduino é o controlador principal e a autoridade sobre o estado físico e operacional. Ele recebe mensagens completas, interpreta e valida JSON, verifica parâmetros e condições de segurança, executa ou recusa comandos, gerencia sensores, atuadores, agendas, manutenção e RTC, e produz ACKs, respostas, telemetria, eventos e erros.
 
----
+As funções essenciais deverão continuar operando mesmo sem ESP32, Wi-Fi ou broker MQTT.
 
-## 3. Configuração da comunicação serial
+### 2.4. Princípio de autoridade
 
-A comunicação entre os dispositivos será realizada por UART.
+O Arduino é a fonte de verdade sobre o estado operacional do SmartBird. A Web apresenta os dados recebidos, mas não presume que uma ação ocorreu sem confirmação do Arduino. O ESP32 transporta mensagens, mas não interpreta seu significado operacional.
+
+## 3. Camadas de comunicação
+
+### 3.1. MQTT
+
+A comunicação entre Web e ESP32 ocorre por meio de um broker MQTT. O MQTT transporta os payloads, mas não substitui o protocolo de aplicação definido aqui.
+
+A conexão deverá utilizar autenticação e, quando disponível no ambiente de implantação, TLS. Credenciais não deverão ser incluídas nos payloads JSON.
+
+### 3.2. UART
+
+A comunicação entre ESP32 e Arduino será realizada por UART TTL.
 
 | Parâmetro | Configuração proposta |
-| :--- | :--- |
-| **Protocolo físico** | UART TTL |
-| **Velocidade** | 115200 baud |
-| **Bits de dados** | 8 |
-| **Paridade** | Nenhuma |
-| **Bits de parada** | 1 |
-| **Formato** | JSON |
-| **Delimitador de mensagem** | `\n` |
-| **Codificação** | UTF-8, preferencialmente sem caracteres acentuados nas chaves e nos identificadores |
+|---|---|
+| Protocolo físico | UART TTL |
+| Velocidade | 115200 baud |
+| Bits de dados | 8 |
+| Paridade | Nenhuma |
+| Bits de parada | 1 |
+| Formato | JSON |
+| Delimitador | `\n` |
+| UART do Mega | Serial1 |
+| TX1 do Mega | Pino 18 |
+| RX1 do Mega | Pino 19 |
 
-*A velocidade de 115200 baud é uma configuração inicial e poderá ser alterada caso os testes indiquem necessidade.*
+115200 baud é uma configuração inicial, sujeita a confirmação nos testes.
 
-### 3.1. Conexões físicas
+### 3.3. Conexões elétricas
 
 | Arduino Mega 2560 | ESP32 | Finalidade |
-| :--- | :--- | :--- |
-| TX1 — pino 18 | RX configurado no ESP32 | Envio Mega → ESP32 |
-| RX1 — pino 19 | TX configurado no ESP32 | Envio ESP32 → Mega |
-| GND | GND | Referência elétrica comum |
+|---|---|---|
+| TX1 — pino 18 | RX do ESP32, por conversor de nível lógico | Mega → ESP32 |
+| RX1 — pino 19 | TX do ESP32 | ESP32 → Mega |
+| GND | GND | Referência comum |
 
-> **Atenção elétrica:** o Arduino Mega utiliza lógica de 5 V e o ESP32 utiliza lógica de 3,3 V. O sinal TX1 do Mega deverá passar por um conversor de nível lógico adequado antes de chegar ao RX do ESP32. **Não conectar diretamente um sinal de 5 V à entrada do ESP32.**
+**Atenção:** o Mega utiliza lógica de 5 V e o ESP32 utiliza lógica de 3,3 V. O TX1 do Mega deverá passar por conversor de nível lógico adequado antes de chegar ao RX do ESP32. Não conectar diretamente 5 V à entrada do ESP32. A UART principal (`Serial`) do Mega deverá permanecer disponível para depuração.
 
-A UART1 do Mega será usada para o ESP32, preservando a UART principal (Serial) para depuração pelo computador.
+## 4. Enquadramento das mensagens UART
 
----
+Cada mensagem deverá ser um objeto JSON completo, em uma única linha, terminado por `\n`.
 
-## 4. Regras gerais do formato JSON
-
-Cada mensagem deverá ocupar uma única linha, terminada por `\n`.
-
-**Exemplo:**
 ```json
-{"v":"1.0","type":"command","id":"cmd-001","source":"esp32","action":"get_status"}
+{"v":"1.0","type":"command","id":"cmd-001","source":"web","action":"get_status","data":{}}
 ```
 
-### 4.1. Campos padronizados
+O receptor acumula bytes até encontrar `\n`; somente então interpreta o JSON. Uma leitura serial não corresponde necessariamente a uma mensagem completa: mensagens podem chegar fragmentadas ou várias podem estar disponíveis na mesma leitura.
 
-| Campo | Tipo | Obrigatório | Descrição |
-| :--- | :--- | :--- | :--- |
+Regras:
+
+- Uma linha contém exatamente um objeto JSON.
+- Não enviar comentários nem texto de depuração na UART do protocolo.
+- Chaves e identificadores não deverão conter acentos.
+- Strings utilizam UTF-8.
+- Quebras de linha em valores textuais deverão ser escapadas conforme JSON.
+- O receptor valida a mensagem completa antes de executar qualquer ação.
+- O firmware deverá impor um limite máximo de bytes por mensagem.
+
+Ao exceder o limite do buffer, o receptor descarta os bytes até o próximo `\n`, registra a ocorrência e não executa conteúdo parcial. **O tamanho numérico máximo do buffer ainda deverá ser definido e testado.**
+
+## 5. Estrutura padrão JSON
+
+### 5.1. Campos comuns
+
+| Campo | Tipo | Obrigatório | Finalidade |
+|---|---|---:|---|
 | `v` | String | Sim | Versão do protocolo |
-| `type` | String | Sim | Categoria da mensagem |
-| `id` | String | Conforme o tipo | Identificador único da mensagem ou solicitação |
-| `source` | String | Sim | Dispositivo que originou a mensagem |
+| `type` | String | Sim | Tipo da mensagem |
+| `id` | String | Conforme tipo | Identificador da mensagem/solicitação |
+| `source` | String | Sim | Origem lógica |
 | `action` | String | Em comandos | Ação solicitada |
-| `data` | Objeto | Conforme o tipo | Dados associados à mensagem |
-| `status` | String | Em resp. de exec. | Estado da operação |
-| `error` | Objeto | Em mensa. de erro | Informações sobre a falha |
+| `status` | String | Em ACK/response | Resultado da aceitação ou execução |
+| `data` | Objeto | Conforme tipo | Parâmetros ou dados retornados |
+| `error` | Objeto | Em erros | Detalhes padronizados da falha |
+| `timestamp` | String | Em telemetria/eventos, quando disponível | Data e hora da ocorrência |
 
-Os campos específicos de cada tipo de mensagem serão detalhados nas próximas seções. Campos não definidos neste documento não deverão ser utilizados sem alinhamento entre os responsáveis pelos firmwares.
+### 5.2. Versão
 
-### 4.2. Identificadores
+`v` identifica a versão do contrato. Os exemplos utilizam `1.0`. Mensagens de versão não suportada não deverão executar comandos; o Arduino deverá informar incompatibilidade quando for possível identificar a mensagem com segurança.
 
-O campo `id` deverá identificar a mensagem ou solicitação.
+### 5.3. Origem (`source`)
 
-Para comandos, o ESP32 deverá gerar um identificador único, que será preservado nas respostas correspondentes. Isso permitirá associar a resposta ao comando original.
+`source` identifica quem originou logicamente a mensagem, não o último equipamento que a transportou. Valores previstos: `web` e `arduino`. O ESP32 não substitui `source` por `esp32`, pois atua apenas como ponte.
 
-**Exemplo:** `cmd-001`, `cmd-002`.
+### 5.4. Identificador (`id`)
 
-Esses identificadores são exemplos. A implementação poderá usar uma estratégia própria de geração, desde que não gere conflitos entre solicitações pendentes.
+Toda solicitação originada na Web deverá possuir identificador único. O mesmo `id` será preservado no ACK e na response final. Exemplos: `cmd-001`, `sync-001`. A estratégia de geração deverá evitar colisões entre solicitações pendentes.
 
-### 4.3. Separação das mensagens
+Telemetrias periódicas e eventos espontâneos não precisam de `id` de solicitação; poderão ter identificador próprio de evento, se necessário.
 
-Cada mensagem deverá ser enviada como JSON válido, seguida de uma quebra de linha.
+### 5.5. Campo `data`
 
-**Exemplo de duas mensagens consecutivas:**
-```json
-{"v":"1.0","type":"command","id":"cmd-001","source":"esp32","action":"get_status"}
-{"v":"1.0","type":"command","id":"cmd-002","source":"esp32","action":"get_telemetry"}
-```
+`data` agrupa parâmetros de comandos ou dados retornados. Comandos sem parâmetros utilizarão `data: {}`.
 
-O receptor deverá acumular os bytes recebidos até encontrar `\n`, interpretar a linha completa e só então processar o JSON.
+## 6. Tipos de mensagem e ciclo de solicitação
 
-Não se deve presumir que uma chamada de leitura serial corresponderá a uma mensagem JSON completa. Uma mensagem pode chegar em várias leituras ou várias mensagens podem estar disponíveis na mesma leitura.
+| Tipo | Direção usual | Finalidade |
+|---|---|---|
+| `command` | Web → Arduino | Solicitar ação ou consulta |
+| `ack` | Arduino → Web | Confirmar recebimento e aceitação/recusa inicial |
+| `response` | Arduino → Web | Informar resultado final |
+| `telemetry` | Arduino → Web | Publicar leituras e estados |
+| `event` | Arduino → Web | Notificar ocorrência relevante |
+| `error` | Arduino → Web | Informar falha de protocolo/processamento ou ocorrência geral |
 
----
+### 6.1. ACK não significa conclusão
 
-## 5. Tipos de mensagem
+Para operações demoradas, o fluxo será: Request, ACK `accepted`, execução local e response final `success` ou `failure`. Se a solicitação não puder ser aceita, o Arduino envia ACK `rejected` com o motivo e não inicia a operação.
 
-Serão utilizados os seguintes tipos iniciais:
+Consultas rápidas também utilizarão ACK e response para manter um ciclo uniforme. Telemetrias e eventos espontâneos não exigem ACK ou response.
 
-| Tipo | Finalidade |
-| :--- | :--- |
-| `command` | Solicitar uma ação ao dispositivo receptor |
-| `ack` | Confirmar o recebimento e a aceitação inicial de uma solicitação |
-| `response` | Informar o resultado de uma solicitação |
-| `telemetry` | Transmitir leituras e estados dos módulos |
-| `event` | Informar uma ocorrência relevante do sistema |
-| `error` | Informar uma falha de comunicação ou processamento |
+### 6.2. Exemplo genérico
 
-A confirmação `ack` não significa necessariamente que a operação física foi concluída. A conclusão deverá ser comunicada por uma `response` ou por um evento definido para a operação.
+**Request — Web → Arduino**
 
----
-
-## 6. Comandos disponíveis
-
-Os comandos a seguir constituem a proposta inicial do protocolo.
-
-| Comando (`action`) | Finalidade | Destino |
-| :--- | :--- | :--- |
-| `get_status` | Consultar o estado geral do sistema | Arduino |
-| `get_telemetry` | Solicitar as leituras disponíveis | Arduino |
-| `feed_manual` | Solicitar alimentação manual | Arduino |
-| `water_manual` | Solicitar reposição manual de água | Arduino |
-| `ack_cleaning` | Confirmar a realização da limpeza | Arduino |
-| `set_schedule` | Configurar horários de funcionamento | Arduino, após definição dos parâmetros |
-
-Os comandos de acionamento deverão ser tratados como solicitações, não como ordens incondicionais. O Arduino poderá recusá-los se houver uma condição insegura, uma operação em andamento ou uma falha relevante.
-
-Os parâmetros de horário, quantidade de alimento e nível de água ainda precisam ser especificados.
-
----
-
-## 7. Exemplos de mensagens
-
-### 7.1. Consultar o estado geral
-
-**ESP32 → Arduino**
 ```json
 {
   "v": "1.0",
   "type": "command",
   "id": "cmd-001",
-  "source": "esp32",
-  "action": "get_status"
+  "source": "web",
+  "action": "get_status",
+  "data": {}
 }
 ```
 
-**Arduino → ESP32 — confirmação de recebimento**
+**ACK — Arduino → Web**
+
 ```json
 {
   "v": "1.0",
@@ -215,7 +211,8 @@ Os parâmetros de horário, quantidade de alimento e nível de água ainda preci
 }
 ```
 
-**Arduino → ESP32 — resposta**
+**Response — Arduino → Web**
+
 ```json
 {
   "v": "1.0",
@@ -223,322 +220,746 @@ Os parâmetros de horário, quantidade de alimento e nível de água ainda preci
   "id": "cmd-001",
   "source": "arduino",
   "status": "success",
-  "data": {
-    "feeding": "idle",
-    "watering": "idle",
-    "rtc": "available",
-    "system": "operational"
-  }
-}
-```
-*Os estados são ilustrativos. Os valores definitivos deverão ser padronizados na implementação.*
-
-### 7.2. Solicitar alimentação manual
-
-**ESP32 → Arduino**
-```json
-{
-  "v": "1.0",
-  "type": "command",
-  "id": "cmd-002",
-  "source": "esp32",
-  "action": "feed_manual",
-  "data": {}
+  "data": {"system": "operational"}
 }
 ```
 
-**Arduino → ESP32 — solicitação aceita**
+## 7. Catálogo de comandos
+
+| `action` | Finalidade | Natureza |
+|---|---|---|
+| `get_status` | Consultar estado geral | Consulta |
+| `get_telemetry` | Solicitar leituras atuais | Consulta |
+| `feed_manual` | Solicitar alimentação manual | Operação |
+| `water_manual` | Solicitar hidratação manual | Operação |
+| `set_schedule` | Criar/substituir agendas | Configuração |
+| `get_schedule` | Consultar agendas | Consulta |
+| `remove_schedule` | Remover/desativar agendamento | Configuração |
+| `set_feeding_config` | Atualizar parâmetros de alimentação | Configuração |
+| `set_watering_config` | Atualizar parâmetros de hidratação | Configuração |
+| `ack_cleaning` | Confirmar limpeza realizada | Manutenção |
+| `sync_time` | Ajustar RTC com horário enviado pela Web | Sincronização |
+| `get_system_info` | Consultar identificação e versão | Consulta |
+
+## 8. Protocolos de consulta
+
+### 8.1. `get_status` — consultar estado geral
+
+**Request**
+
+```json
+{"v":"1.0","type":"command","id":"cmd-001","source":"web","action":"get_status","data":{}}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-001","source":"arduino","status":"accepted"}
+```
+
+**Response**
+
 ```json
 {
-  "v": "1.0",
-  "type": "ack",
-  "id": "cmd-002",
-  "source": "arduino",
-  "status": "accepted"
+  "v":"1.0","type":"response","id":"cmd-001","source":"arduino","status":"success",
+  "data":{"system":"operational","feeding":"idle","watering":"idle","maintenance":"normal","rtc":"available"}
 }
 ```
 
-**Arduino → ESP32 — operação concluída**
-```json
-{
-  "v": "1.0",
-  "type": "response",
-  "id": "cmd-002",
-  "source": "arduino",
-  "status": "success",
-  "data": {
-    "module": "feeding",
-    "result": "completed"
-  }
-}
-```
-*Se a alimentação for recusada, o Arduino deverá responder com status: `rejected` e um código de motivo. A operação física deverá possuir limites de tempo e critérios de interrupção. O Arduino não deverá manter o servo acionado indefinidamente caso o sensor de peso falhe.*
+Os estados são ilustrativos e deverão corresponder às enumerações finais do firmware.
 
-### 7.3. Solicitar reposição de água
+### 8.2. `get_telemetry` — consultar leituras
 
-**ESP32 → Arduino**
+**Request**
+
 ```json
-{
-  "v": "1.0",
-  "type": "command",
-  "id": "cmd-003",
-  "source": "esp32",
-  "action": "water_manual",
-  "data": {}
-}
+{"v":"1.0","type":"command","id":"cmd-002","source":"web","action":"get_telemetry","data":{}}
 ```
 
-**Arduino → ESP32 — operação concluída**
+**ACK**
+
 ```json
-{
-  "v": "1.0",
-  "type": "response",
-  "id": "cmd-003",
-  "source": "arduino",
-  "status": "success",
-  "data": {
-    "module": "watering",
-    "result": "completed"
-  }
-}
+{"v":"1.0","type":"ack","id":"cmd-002","source":"arduino","status":"accepted"}
 ```
-*O exemplo representa uma operação bem-sucedida. A implementação deverá verificar as condições de segurança antes de acionar a bomba e interrompê-la caso o nível máximo seja atingido, o tempo limite seja excedido ou ocorra uma falha.*
 
-### 7.4. Enviar telemetria
+**Response**
 
-**Arduino → ESP32**
 ```json
 {
-  "v": "1.0",
-  "type": "telemetry",
-  "source": "arduino",
-  "data": {
-    "feeding": {
-      "food_weight_g": 85.0,
-      "servo_state": "idle"
+  "v":"1.0","type":"response","id":"cmd-002","source":"arduino","status":"success",
+  "data":{
+    "reservoirs":{
+      "food":{"level_percent":76.0,"valid":true,"low":false},
+      "water":{"level_percent":62.0,"valid":true,"low":false}
     },
-    "watering": {
-      "water_level_percent": 72,
-      "pump_state": false
+    "feeding":{"state":"idle"},
+    "watering":{"state":"idle"}
+  }
+}
+```
+
+Valores fictícios. Leituras devem indicar validade; leitura inválida não pode ser interpretada como nível zero.
+
+### 8.3. `get_schedule` — consultar agendas
+
+**Request**
+
+```json
+{"v":"1.0","type":"command","id":"cmd-003","source":"web","action":"get_schedule","data":{}}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-003","source":"arduino","status":"accepted"}
+```
+
+**Response**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-003","source":"arduino","status":"success",
+  "data":{
+    "feeding":{"enabled":true,"times":["08:00","18:00"]},
+    "watering":{"enabled":true,"times":["08:00","18:00"]}
+  }
+}
+```
+
+Horários ilustrativos. Quantidade máxima, ordenação e persistência deverão respeitar as regras finais do firmware.
+
+### 8.4. `get_system_info` — consultar informações do sistema
+
+**Request**
+
+```json
+{"v":"1.0","type":"command","id":"cmd-004","source":"web","action":"get_system_info","data":{}}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-004","source":"arduino","status":"accepted"}
+```
+
+**Response**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-004","source":"arduino","status":"success",
+  "data":{"device":"smartbird","controller":"arduino_mega_2560","firmware_version":"0.1.0","protocol_version":"1.0"}
+}
+```
+
+## 9. Protocolos de operação
+
+### 9.1. `feed_manual` — alimentação manual
+
+**Request**
+
+```json
+{"v":"1.0","type":"command","id":"cmd-010","source":"web","action":"feed_manual","data":{}}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-010","source":"arduino","status":"accepted"}
+```
+
+**Response — sucesso**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-010","source":"arduino","status":"success",
+  "data":{"module":"feeding","result":"completed"}
+}
+```
+
+**Response — falha após aceitação**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-010","source":"arduino","status":"failure",
+  "error":{"code":"ACTUATOR_TIMEOUT","message":"Feeding operation exceeded its time limit"}
+}
+```
+
+O Arduino valida condições de segurança antes do acionamento. O ciclo deverá respeitar limites de tempo e leituras dos sensores. O servo não poderá permanecer acionado indefinidamente em caso de falha. Recusa anterior ao início será comunicada por ACK `rejected`.
+
+### 9.2. `water_manual` — hidratação manual
+
+**Request**
+
+```json
+{"v":"1.0","type":"command","id":"cmd-011","source":"web","action":"water_manual","data":{}}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-011","source":"arduino","status":"accepted"}
+```
+
+**Response — sucesso**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-011","source":"arduino","status":"success",
+  "data":{"module":"watering","result":"completed"}
+}
+```
+
+**Response — falha após aceitação**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-011","source":"arduino","status":"failure",
+  "error":{"code":"WATER_SENSOR_FAILURE","message":"Water level could not be verified safely"}
+}
+```
+
+A bomba deverá ser interrompida quando o nível-alvo for atingido, o tempo máximo for excedido ou ocorrer falha que impeça operação segura.
+
+### 9.3. `ack_cleaning` — confirmar limpeza
+
+**Request**
+
+```json
+{"v":"1.0","type":"command","id":"cmd-012","source":"web","action":"ack_cleaning","data":{}}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-012","source":"arduino","status":"accepted"}
+```
+
+**Response**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-012","source":"arduino","status":"success",
+  "data":{"cleaning_due":false,"maintenance_timer_reset":true}
+}
+```
+
+A confirmação reinicia o intervalo de manutenção conforme as regras do projeto; não inicia alimentação ou hidratação. O intervalo atualmente previsto é de dois dias, sujeito à configuração final do módulo.
+
+## 10. Protocolos de configuração
+
+### 10.1. `set_schedule` — configurar agendas
+
+**Request**
+
+```json
+{
+  "v":"1.0","type":"command","id":"cmd-020","source":"web","action":"set_schedule",
+  "data":{
+    "feeding":{"enabled":true,"times":["08:00","18:00"]},
+    "watering":{"enabled":true,"times":["08:00","18:00"]}
+  }
+}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-020","source":"arduino","status":"accepted"}
+```
+
+**Response**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-020","source":"arduino","status":"success",
+  "data":{"schedule_updated":true}
+}
+```
+
+O Arduino valida formato, quantidade máxima, duplicidade e demais regras. A alteração só será confirmada após atualização efetiva. A estrutura deverá ser compatível com o modelo de agenda do firmware.
+
+### 10.2. `remove_schedule` — remover agendamento
+
+**Request**
+
+```json
+{
+  "v":"1.0","type":"command","id":"cmd-021","source":"web","action":"remove_schedule",
+  "data":{"module":"feeding","time":"18:00"}
+}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-021","source":"arduino","status":"accepted"}
+```
+
+**Response**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-021","source":"arduino","status":"success",
+  "data":{"module":"feeding","time":"18:00","removed":true}
+}
+```
+
+**Pendente:** decidir se a remoção será identificada por horário, índice ou identificador próprio.
+
+### 10.3. `set_feeding_config` — configurar alimentação
+
+**Request — exemplo de proposta**
+
+```json
+{
+  "v":"1.0","type":"command","id":"cmd-022","source":"web","action":"set_feeding_config",
+  "data":{"target_weight_g":20.0,"max_duration_ms":5000}
+}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-022","source":"arduino","status":"accepted"}
+```
+
+**Response**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-022","source":"arduino","status":"success",
+  "data":{"configuration_updated":true}
+}
+```
+
+Os campos são exemplos, não parâmetros aprovados. Os limites definitivos deverão refletir a configuração real do módulo e ser validados no Arduino.
+
+### 10.4. `set_watering_config` — configurar hidratação
+
+**Request — exemplo de proposta**
+
+```json
+{
+  "v":"1.0","type":"command","id":"cmd-023","source":"web","action":"set_watering_config",
+  "data":{"target_level_percent":90.0,"max_duration_ms":10000}
+}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"cmd-023","source":"arduino","status":"accepted"}
+```
+
+**Response**
+
+```json
+{
+  "v":"1.0","type":"response","id":"cmd-023","source":"arduino","status":"success",
+  "data":{"configuration_updated":true}
+}
+```
+
+Campos e limites são ilustrativos. O Arduino deverá rejeitar valores fora dos limites seguros.
+
+## 11. Sincronização temporal
+
+### 11.1. Responsabilidade e funcionamento
+
+A Aplicação Web envia data e horário ao Arduino por meio do comando `sync_time`. O ESP32 recebe o payload MQTT e o retransmite pela UART sem interpretar ou modificar o JSON. O Arduino valida os dados e atualiza o RTC.
+
+Após a sincronização, o RTC continua contando o tempo localmente. Agendas e rotinas não dependerão de conexão permanente com Web, Wi-Fi ou broker MQTT.
+
+### 11.2. Formato
+
+A proposta utiliza ISO 8601 com deslocamento de fuso explícito. Exemplo: `2026-11-10T14:30:00-03:00`. O deslocamento é ilustrativo e deverá corresponder ao horário enviado pela aplicação.
+
+### 11.3. `sync_time` — sincronizar RTC
+
+**Request**
+
+```json
+{
+  "v":"1.0","type":"command","id":"sync-001","source":"web","action":"sync_time",
+  "data":{"datetime":"2026-11-10T14:30:00-03:00"}
+}
+```
+
+**ACK**
+
+```json
+{"v":"1.0","type":"ack","id":"sync-001","source":"arduino","status":"accepted"}
+```
+
+**Response — sucesso**
+
+```json
+{
+  "v":"1.0","type":"response","id":"sync-001","source":"arduino","status":"success",
+  "data":{"rtc_updated":true,"datetime":"2026-11-10T14:30:00-03:00"}
+}
+```
+
+**Response — falha**
+
+```json
+{
+  "v":"1.0","type":"response","id":"sync-001","source":"arduino","status":"failure",
+  "error":{"code":"RTC_FAILURE","message":"RTC could not be updated"}
+}
+```
+
+### 11.4. Regras
+
+- A Web envia data e hora válidas, incluindo deslocamento de fuso.
+- O Arduino valida formato e componentes antes de atualizar o RTC.
+- A atualização ocorre somente após validação.
+- O Arduino confirma se a atualização foi concluída.
+- O RTC continua contando o tempo sem internet.
+- A sincronização poderá ocorrer na inicialização da aplicação ou por solicitação manual.
+- A frequência de sincronização automática ainda deverá ser definida.
+
+**Ponto técnico a validar:** conversão do ISO 8601 com deslocamento para a representação do módulo RTC e tratamento de horário local versus UTC. O contrato externo está proposto, mas a conversão interna precisa ser implementada e testada.
+
+## 12. Telemetria
+
+Telemetria é uma mensagem espontânea do Arduino. Não está vinculada a um comando e não exige ACK ou response.
+
+**Exempl0 o — Arduino → Web**
+
+```json
+{
+  "v":"1.0","type":"telemetry","source":"arduino",
+  "timestamp":"2026-11-10T14:35:00-03:00",
+  "data":{
+    "reservoirs":{
+      "food":{"level_percent":76.0,"distance_cm":12.4,"valid":true,"low":false},
+      "water":{"level_percent":62.0,"distance_cm":15.1,"valid":true,"low":false}
     },
-    "maintenance": {
-      "cleaning_due": false
-    }
-  }
-}
-```
-*Os valores de peso e nível são fictícios, usados somente para demonstrar o formato. A telemetria poderá ser enviada periodicamente ou quando ocorrer uma mudança relevante. O intervalo definitivo será estabelecido durante os testes.*
-
-### 7.5. Confirmar a limpeza
-
-**ESP32 → Arduino**
-```json
-{
-  "v": "1.0",
-  "type": "command",
-  "id": "cmd-004",
-  "source": "esp32",
-  "action": "ack_cleaning",
-  "data": {}
-}
-```
-
-**Arduino → ESP32**
-```json
-{
-  "v": "1.0",
-  "type": "response",
-  "id": "cmd-004",
-  "source": "arduino",
-  "status": "success",
-  "data": {
-    "cleaning_due": false,
-    "maintenance_timer_reset": true
-  }
-}
-```
-*A confirmação deverá reiniciar o intervalo do lembrete conforme as regras de manutenção definidas pelo projeto. Ela não deverá iniciar automaticamente a alimentação ou a hidratação.*
-
-### 7.6. Informar uma falha
-
-**Arduino → ESP32**
-```json
-{
-  "v": "1.0",
-  "type": "error",
-  "id": "cmd-003",
-  "source": "arduino",
-  "error": {
-    "code": "WATER_SENSOR_FAILURE",
-    "message": "Water level could not be read"
+    "feeding":{"state":"idle"},
+    "watering":{"state":"idle"},
+    "maintenance":{"cleaning_due":false}
   }
 }
 ```
 
-**Códigos iniciais sugeridos:**
+Valores fictícios. A telemetria deverá indicar validade das leituras; a Web distinguirá dado inválido, indisponível e desatualizado. O Arduino não deverá bloquear controles locais para transmitir telemetria.
+
+**Pendente:** definir intervalo periódico, publicação por mudança de estado e política de retenção MQTT.
+
+## 13. Eventos e notificações
+
+Eventos são mensagens espontâneas emitidas pelo Arduino para comunicar ocorrências relevantes. Não exigem ACK ou response de solicitação.
+
+### 13.1. Estrutura geral
+
+```json
+{
+  "v":"1.0","type":"event","source":"arduino",
+  "timestamp":"2026-11-10T14:35:00-03:00",
+  "data":{"name":"event_name","details":{}}
+}
+```
+
+### 13.2. Alimentação concluída
+
+```json
+{
+  "v":"1.0","type":"event","source":"arduino",
+  "timestamp":"2026-11-10T14:35:00-03:00",
+  "data":{"name":"feeding_completed","origin":"scheduled"}
+}
+```
+
+### 13.3. Nível baixo
+
+```json
+{
+  "v":"1.0","type":"event","source":"arduino",
+  "timestamp":"2026-11-10T14:35:00-03:00",
+  "data":{"name":"reservoir_low","reservoir":"food","level_percent":15.0}
+}
+```
+
+### 13.4. Limpeza pendente
+
+```json
+{
+  "v":"1.0","type":"event","source":"arduino",
+  "timestamp":"2026-11-10T14:35:00-03:00",
+  "data":{"name":"cleaning_due"}
+}
+```
+
+### 13.5. Execução programada perdida
+
+Se o Arduino reiniciar e identificar que um horário programado passou sem execução, não deverá iniciar automaticamente a alimentação ou hidratação atrasada. Deverá manter o registro e notificar a Web para que o usuário decida se deseja executar a operação manualmente.
+
+```json
+{
+  "v":"1.0","type":"event","source":"arduino",
+  "timestamp":"2026-11-10T14:35:00-03:00",
+  "data":{
+    "name":"scheduled_execution_missed",
+    "module":"feeding",
+    "scheduled_time":"14:00",
+    "action_required":"user_decision"
+  }
+}
+```
+
+A recusa da sugestão não deverá apagar indevidamente o histórico. A pendência operacional deverá ser resolvida conforme a regra do módulo, por exemplo, após uma execução posterior concluída.
+
+### 13.6. Regras
+
+Eventos terão nomes padronizados e timestamp quando o RTC estiver disponível. O Arduino continuará funcionando mesmo se não conseguir transmitir. A estratégia de armazenamento e reenvio após perda de conexão deverá ser definida.
+
+**Pendente:** identificador único de evento e política de persistência/reenvio.
+
+## 14. Erros e recusas
+
+### 14.1. Estrutura de erro
+
+```json
+{
+  "v":"1.0","type":"error","id":"cmd-010","source":"arduino",
+  "error":{"code":"SAFETY_BLOCK","message":"Operation blocked by a safety condition"}
+}
+```
+
+Quando associado a uma solicitação, o erro repete seu `id`. Erros gerais poderão omitir `id`.
+
+Recusa antes da execução: ACK `rejected` com motivo. Falha após aceitação: response final `failure`. O tipo `error` fica reservado a falhas de protocolo/processamento ou ocorrências gerais que não sejam melhor representadas pela response da operação.
+
+### 14.2. Códigos iniciais
 
 | Código | Significado |
-| :--- | :--- |
-| `INVALID_JSON` | Mensagem JSON inválida |
-| `UNKNOWN_COMMAND` | Comando não reconhecido |
-| `INVALID_PARAMETER` | Parâmetro inválido |
+|---|---|
+| `INVALID_JSON` | JSON inválido |
+| `INVALID_MESSAGE` | Estrutura de mensagem inválida |
+| `UNKNOWN_COMMAND` | Ação não reconhecida |
+| `INVALID_PARAMETER` | Parâmetro ausente ou inválido |
+| `UNSUPPORTED_VERSION` | Versão não suportada |
 | `BUSY` | Módulo ocupado |
 | `SAFETY_BLOCK` | Operação impedida por segurança |
 | `WEIGHT_SENSOR_FAILURE` | Falha no sensor de peso |
 | `WATER_SENSOR_FAILURE` | Falha no sensor de água |
-| `ACTUATOR_TIMEOUT` | Atuador excedeu o tempo máximo |
-| `RTC_FAILURE` | Falha no relógio de tempo real |
-| `UNSUPPORTED_VERSION` | Versão de protocolo incompatível |
+| `RESERVOIR_SENSOR_FAILURE` | Falha na leitura de reservatório |
+| `ACTUATOR_TIMEOUT` | Atuador excedeu tempo máximo |
+| `RTC_FAILURE` | Falha no RTC |
+| `INTERNAL_ERROR` | Falha interna não classificada |
 
-*Os códigos deverão ser usados de forma consistente. A mensagem textual serve para diagnóstico; a lógica do sistema deverá depender principalmente do código.*
+A mensagem textual serve para diagnóstico; a lógica deverá depender principalmente do código.
 
----
+### 14.3. Status de ACK
 
-## 8. Estados das operações
+| Status | Significado |
+|---|---|
+| `accepted` | Solicitação válida e aceita para processamento |
+| `rejected` | Solicitação recebida, mas recusada antes da execução |
 
-Para evitar ambiguidades, os módulos deverão usar estados padronizados.
+### 14.4. Status de response
 
-**Alimentação**
-* `idle`: nenhuma operação em andamento.
-* `running`: mecanismo em operação.
-* `completed`: operação concluída.
-* `blocked`: operação impedida por uma condição de segurança.
-* `error`: falha detectada.
+| Status | Significado |
+|---|---|
+| `success` | Operação ou consulta concluída com sucesso |
+| `failure` | Operação aceita, mas não concluída com sucesso |
 
-**Hidratação**
-* `idle`: nenhuma operação em andamento.
-* `running`: bomba em operação.
-* `completed`: reposição concluída.
-* `blocked`: operação impedida por uma condição de segurança.
-* `error`: falha detectada.
+## 15. Estados operacionais expostos à Web
 
-*O `ack` informa que o comando foi recebido e aceito inicialmente. O estado do módulo informa a situação da operação física. Esses conceitos não deverão ser confundidos.*
+Convenção externa proposta:
 
----
+| Módulo | Estado | Significado |
+|---|---|---|
+| Sistema | `initializing` | Inicialização em andamento |
+| Sistema | `operational` | Operação normal |
+| Sistema | `alert` | Alerta que requer atenção |
+| Sistema | `error` | Falha que compromete uma função |
+| Alimentação | `idle` | Sem operação em andamento |
+| Alimentação | `checking` | Verificação prévia |
+| Alimentação | `running` | Alimentação em andamento |
+| Alimentação | `completed` | Ciclo concluído |
+| Alimentação | `error` | Falha no ciclo |
+| Hidratação | `idle` | Sem operação em andamento |
+| Hidratação | `checking` | Verificação prévia |
+| Hidratação | `running` | Bomba em operação |
+| Hidratação | `completed` | Ciclo concluído |
+| Hidratação | `error` | Falha no ciclo |
+| RTC | `available` | Relógio disponível |
+| RTC | `invalid` | Horário não validado |
+| RTC | `failure` | Falha no RTC |
 
-## 9. Regras de segurança e validação
+`idle` não significa ausência de alertas. Estado operacional e condição de alerta deverão ser apresentados separadamente quando necessário.
 
-1. O Arduino deverá validar todos os comandos recebidos antes de executar qualquer ação.
-2. Comandos desconhecidos ou mensagens inválidas deverão ser rejeitados.
-3. Operações físicas deverão ter limites de tempo e condições explícitas de interrupção.
-4. A bomba não deverá ser acionada se houver falha de leitura que impeça verificar o nível de água com segurança.
-5. O servo não deverá permanecer acionado indefinidamente em caso de falha do sensor de peso.
-6. A perda de comunicação com o ESP32 não deverá interromper as rotinas locais essenciais do Arduino.
-7. O sistema deverá distinguir falhas de comunicação de falhas dos sensores e atuadores.
-8. Comandos repetidos com o mesmo identificador não deverão iniciar a mesma operação física novamente. O tratamento de duplicatas deverá ser definido na implementação.
-9. O ESP32 deverá informar ao painel quando não conseguir se comunicar com o Arduino.
-10. A interface web não deverá apresentar uma operação como concluída antes de receber a confirmação correspondente.
-11. O funcionamento automático e os comandos manuais deverão respeitar as mesmas condições de segurança.
-12. Nenhuma operação deverá depender exclusivamente da disponibilidade da internet.
+## 16. Tópicos MQTT
 
----
+### 16.1. Convenção proposta
 
-## 10. Tratamento de erros de comunicação
-
-Quando uma mensagem JSON não puder ser interpretada, o receptor deverá descartar a mensagem inválida e continuar procurando o próximo delimitador `\n`.
-
-O firmware deverá impor um tamanho máximo de mensagem para evitar consumo excessivo de memória. O limite definitivo deverá ser escolhido de acordo com os recursos disponíveis e os tamanhos reais das mensagens.
-
-Se uma mensagem exceder o limite, o receptor deverá descartar o conteúdo até o próximo delimitador e registrar o erro, sem tentar executar o comando parcialmente recebido.
-
-Para comandos que aguardam resposta, o ESP32 deverá implementar um tempo limite. Se não houver resposta, poderá tentar recuperar a comunicação ou consultar novamente o estado do sistema. Não deverá repetir automaticamente um comando de acionamento sem verificar o resultado anterior.
-
----
-
-## 11. Configuração de horários
-
-A configuração de horários será definida pelo comando `set_schedule`, mas os parâmetros ainda precisam ser aprovados pela equipe.
-
-**Exemplo de estrutura proposta:**
-```json
-{
-  "v": "1.0",
-  "type": "command",
-  "id": "cmd-005",
-  "source": "esp32",
-  "action": "set_schedule",
-  "data": {
-    "feeding": {
-      "enabled": true,
-      "times": ["08:00", "18:00"]
-    },
-    "watering": {
-      "enabled": true,
-      "times": ["08:00", "18:00"]
-    }
-  }
-}
+```text
+smartbird/{device_id}/command
+smartbird/{device_id}/ack
+smartbird/{device_id}/response
+smartbird/{device_id}/telemetry
+smartbird/{device_id}/event
+smartbird/{device_id}/error
 ```
-*Os horários acima são apenas ilustrativos e não representam uma recomendação de alimentação ou hidratação para uma espécie específica.*
 
-Antes da implementação, a equipe deverá definir se a rotina será acionada por horário, por condição dos sensores ou pela combinação dos dois. Também será necessário estabelecer como os horários serão armazenados e recuperados após uma reinicialização.
+`{device_id}` identificará unicamente cada equipamento SmartBird; seu valor definitivo ainda deverá ser definido.
 
----
+### 16.2. Direções
 
-## 12. Organização sugerida do software
+| Tópico | Publicador | Assinante principal | Conteúdo |
+|---|---|---|---|
+| `smartbird/{device_id}/command` | Web | ESP32 | Comandos para o Arduino |
+| `smartbird/{device_id}/ack` | ESP32, encaminhando Arduino | Web | ACKs do Arduino |
+| `smartbird/{device_id}/response` | ESP32, encaminhando Arduino | Web | Respostas do Arduino |
+| `smartbird/{device_id}/telemetry` | ESP32, encaminhando Arduino | Web | Telemetria |
+| `smartbird/{device_id}/event` | ESP32, encaminhando Arduino | Web | Eventos |
+| `smartbird/{device_id}/error` | ESP32, encaminhando Arduino | Web | Erros |
 
-Uma possível divisão do firmware:
+O ESP32 não modifica o payload. O tópico identifica o canal de transporte; o JSON mantém o contrato de aplicação.
 
-**Arduino Mega**
-* `communication`: leitura serial, separação das mensagens e envio de respostas.
-* `protocol`: validação das mensagens e despacho dos comandos.
-* `feeding`: controle da alimentação.
-* `watering`: controle da hidratação.
-* `maintenance`: gerenciamento dos lembretes.
-* `sensors`: leitura e validação dos sensores.
-* `scheduler`: gerenciamento das rotinas programadas.
+### 16.3. QoS e retained
 
-**ESP32**
-* `serial_client`: comunicação UART com o Mega.
-* `protocol`: criação e interpretação das mensagens JSON.
-* `wifi_manager`: gerenciamento da conexão Wi-Fi.
-* `web_server`: interface e endpoints do painel.
-* `state_manager`: manutenção do último estado conhecido.
-* `telemetry`: encaminhamento das leituras para a interface.
+A política deverá ser definida durante a implementação. Como orientação inicial, comandos e respostas exigem entrega confiável e correlação por `id`; telemetria poderá utilizar política mais leve se a Web identificar dados desatualizados; eventos importantes poderão exigir QoS maior e reenvio.
 
-*A estrutura é uma sugestão e poderá ser adaptada à organização do repositório.*
+Comandos não deverão ser retidos de modo que um comando antigo seja executado inesperadamente após reconexão. O uso de retained para estado atual deverá ser avaliado separadamente.
 
----
+**QoS MQTT não substitui ACK de aplicação.** Confirmação de entrega MQTT não significa que o Arduino recebeu, validou ou executou o comando.
 
-## 13. Critérios de validação
+## 17. Segurança e validação
 
-Antes de considerar o protocolo implementado, a equipe deverá verificar:
+1. O Arduino valida todas as mensagens antes de executar ações.
+2. Mensagens inválidas, incompletas ou incompatíveis não acionam atuadores.
+3. Parâmetros são validados quanto a tipo, faixa e presença.
+4. Operações físicas possuem limites de tempo e condições explícitas de interrupção.
+5. A bomba não é acionada se não for possível verificar o nível com segurança.
+6. O servo não permanece acionado indefinidamente em caso de falha do sensor.
+7. Rotinas automáticas e comandos manuais respeitam as mesmas condições de segurança.
+8. A Web apresenta o resultado informado pelo Arduino, não presume sucesso pela publicação MQTT.
+9. Credenciais do broker não são incluídas nos payloads.
+10. O broker utiliza autenticação e, quando disponível, transporte criptografado.
+11. Funções essenciais continuam operando sem conexão externa.
+12. Falha de comunicação é distinguida de falha de sensor ou atuador.
 
-- [ ] Os dispositivos conseguem trocar mensagens na velocidade definida.
-- [ ] As mensagens JSON válidas são interpretadas corretamente.
+## 18. Duplicidade, timeout e recuperação
+
+### 18.1. Comandos duplicados
+
+O Arduino deverá evitar executar duas vezes uma operação física recebida com o mesmo `id`. A implementação deverá manter registro dos identificadores recentes e resultados correspondentes. Ao receber novamente um `id` processado, deverá retornar o resultado conhecido ou informar que já foi tratado, sem iniciar novamente a operação.
+
+O período de retenção e a persistência após reinicialização ainda deverão ser definidos.
+
+### 18.2. Timeout
+
+A Web deverá considerar timeout se não receber ACK dentro do intervalo definido. Se recebeu ACK `accepted`, mas ainda não recebeu response, deverá apresentar operação em andamento ou resultado desconhecido, e não falha automática.
+
+A Web não deverá reenviar automaticamente comandos de acionamento sem consultar o estado ou verificar o identificador original.
+
+### 18.3. Perda de MQTT ou Wi-Fi
+
+O Arduino continua executando agendas e controles locais. O ESP32 tenta restabelecer a conexão. A Web indica desconexão ou dados desatualizados. A estratégia de armazenamento e reenvio de eventos deverá ser definida.
+
+### 18.4. Perda de UART
+
+O ESP32 detecta ausência de comunicação conforme a estratégia implementada. O Arduino mantém funções locais. O ESP32 não apresenta comandos como executados sem resposta do Arduino. Após recuperação, a Web poderá consultar o estado atual.
+
+### 18.5. Mensagem incompleta ou buffer excedido
+
+O receptor descarta conteúdo incompleto conforme timeout ou limite do buffer e recupera o enquadramento no próximo `\n`. Nenhum fragmento poderá ser executado.
+
+## 19. Organização sugerida do software
+
+### 19.1. Arduino Mega
+
+- `Comunicacao`: leitura/escrita UART, buffer e delimitação por `\n`.
+- `Protocolo`: interpretação JSON, validação e despacho das ações.
+- `Controle`: coordenação dos módulos.
+- `Reservatorios`: leitura e validação de níveis.
+- `Alimentacao`: ciclo de alimentação.
+- `Hidratacao`: ciclo de hidratação.
+- `Tempo`: comunicação com RTC e referência temporal.
+- `Manutencao`: lembretes e confirmações de limpeza.
+- `Interface`: display, botões e avisos locais.
+
+A camada de comunicação transporta mensagens; a camada de protocolo interpreta conteúdo; módulos operacionais executam suas regras.
+
+### 19.2. ESP32
+
+- `WiFi_Manager`: conexão e reconexão Wi-Fi.
+- `MQTT_Client`: conexão, assinatura e publicação MQTT.
+- `UART_Bridge`: encaminhamento transparente entre MQTT e UART.
+- `Connection_Manager`: acompanhamento das conexões.
+
+O ESP32 não implementa regras de alimentação, hidratação, agenda ou manutenção.
+
+### 19.3. Aplicação Web
+
+- `mqtt_client`: conexão com broker.
+- `command_service`: montagem e publicação de comandos.
+- `response_handler`: correlação de ACKs/responses por `id`.
+- `telemetry_handler`: atualização dos dados.
+- `event_handler`: notificações.
+- `time_service`: obtenção e envio de horário por `sync_time`.
+
+## 20. Critérios de validação
+
+- [ ] Web publica comandos no tópico correto.
+- [ ] ESP32 retransmite payload MQTT sem alterações.
+- [ ] Arduino recompõe corretamente mensagens UART fragmentadas.
+- [ ] JSON válido é interpretado corretamente.
 - [ ] Mensagens inválidas não provocam acionamentos.
-- [ ] Os comandos são associados às respostas por seus identificadores.
-- [ ] Os estados dos módulos são transmitidos corretamente.
-- [ ] Falhas de sensores e atuadores são comunicadas.
-- [ ] A perda de conexão com o ESP32 não interrompe as rotinas locais.
+- [ ] Versão, tipo, origem, ação e parâmetros são validados.
+- [ ] ACK e response preservam o `id` do request.
+- [ ] Web diferencia ACK de conclusão.
+- [ ] Consultas retornam dados esperados.
+- [ ] Alimentação e hidratação respeitam condições de segurança.
+- [ ] Agendas são validadas e aplicadas.
+- [ ] `sync_time` atualiza RTC e retorna confirmação.
+- [ ] RTC continua contando sem internet.
+- [ ] Telemetria indica validade das leituras.
+- [ ] Eventos e falhas são encaminhados corretamente.
 - [ ] Comandos duplicados não provocam acionamentos repetidos.
-- [ ] Os limites de tempo e as condições de segurança são respeitados.
-- [ ] O painel apresenta estados reais e distingue falhas de dados indisponíveis.
+- [ ] Buffer excedido não resulta em execução parcial.
+- [ ] Perda de Wi-Fi, MQTT ou ESP32 não interrompe rotinas locais.
+- [ ] Web apresenta dados desatualizados ou indisponíveis corretamente.
 
----
+## 21. Decisões pendentes
 
-## 14. Decisões pendentes
+- [ ] Identificador definitivo (`device_id`).
+- [ ] Confirmação da velocidade UART de 115200 baud.
+- [ ] Tamanho máximo do buffer UART.
+- [ ] Biblioteca JSON e dimensionamento de memória no Mega.
+- [ ] Campos e limites finais de `set_feeding_config`.
+- [ ] Campos e limites finais de `set_watering_config`.
+- [ ] Estrutura final de `set_schedule` e `remove_schedule`.
+- [ ] Persistência das agendas.
+- [ ] Frequência de telemetria.
+- [ ] QoS e retained por tópico MQTT.
+- [ ] Identificador único de evento e política de reenvio.
+- [ ] Timeouts de ACK, response e UART.
+- [ ] Retenção de identificadores para deduplicação.
+- [ ] Persistência do registro de comandos após reinicialização.
+- [ ] Frequência de sincronização automática do RTC.
+- [ ] Conversão de fuso horário no Arduino.
+- [ ] Autenticação, TLS e permissões do broker.
+- [ ] Recuperação e apresentação de dados após reconexão.
 
-Os seguintes pontos deverão ser definidos antes de considerar o protocolo estável:
-
-- [ ] Biblioteca JSON e limites de memória.
-- [ ] Tamanho máximo de mensagem.
-- [ ] Intervalo de envio da telemetria.
-- [ ] Estados e códigos de erro definitivos.
-- [ ] Parâmetros do comando `set_schedule`.
-- [ ] Estratégia de recuperação após perda de comunicação.
-- [ ] Política de repetição de comandos e tratamento de duplicatas.
-- [ ] Versão final dos nomes e tipos dos campos.
-- [ ] Método de autenticação e segurança do acesso remoto.
-- [ ] Necessidade de armazenamento persistente do histórico.
-
----
-
-## 15. Controle de versões
+## 22. Controle de versões
 
 | Versão | Alterações |
-| :--- | :--- |
-| **0.1.0** | Estrutura inicial, tipos de mensagem, comandos propostos, exemplos JSON e regras de validação |
-| **1.0.0** | A ser definida após validação e testes de integração |
+|---|---|
+| `0.1.0` | Estrutura inicial, tipos de mensagem, comandos e regras preliminares |
+| `0.2.0` | Arquitetura de ponte ESP32 transparente; tópicos MQTT; ciclo Request/ACK/Response; protocolos de configuração, eventos, telemetria e sincronização RTC iniciada pela Web |
+| `1.0.0` | A definir após validação da equipe e testes de integração |
 
-> **Regra da equipe:** toda alteração incompatível com o protocolo deverá ser discutida e documentada antes de modificar os firmwares. O objetivo é garantir que o Arduino e o ESP32 continuem utilizando o mesmo contrato de comunicação.
+## 23. Manutenção do documento
+
+Toda alteração incompatível deverá ser discutida antes de modificar os firmwares da Web, ESP32 ou Arduino. Os três componentes deverão utilizar a mesma versão do protocolo.
+
+A implementação deverá seguir este documento. Se os testes exigirem mudanças, elas deverão ser registradas aqui antes ou junto da atualização do código.
+
+---
+
+**Fim do documento — SmartBird Protocolo de Comunicação v0.2.0**
