@@ -315,33 +315,261 @@ Para assegurar que reinicializações do Arduino ou quedas de energia não apagu
 
 ---
 
-## **9. Interface física: LCD, botões, LEDs e buzzer**
+## 9. Interface Física
 
-A interface física garante acesso essencial e autônomo ao sistema, operando plenamente mesmo sem conectividade com a internet.
+### 9.1. Objetivo
 
-### **9.1. LCD 16x2**
-O display LCD exibirá mensagens curtas, priorizando status críticos de funcionamento:
+A interface física constitui o meio local de interação entre o usuário e o SmartBird, permitindo visualizar informações essenciais do sistema, acompanhar alertas operacionais, executar comandos básicos e realizar configurações sem depender de conexão com a internet ou do painel web.
 
-| **Exemplo de Mensagem** | **Significado Operacional** |
-| :--- | :--- |
-| `SmartBird  10:30` <br> `Agua:OK  Rac:BAIX` | Horário atual e monitoramento resumido dos dois reservatórios |
-| `Alimentacao:ativa` <br> `Limpeza pendente` | Execução de rotina mecânica e alerta de manutenção ultrapassada |
+Seu funcionamento deve permanecer disponível mesmo em situações de falha de comunicação entre o Arduino Mega, o ESP32 ou a infraestrutura MQTT.
 
-A formatação textual evitará caracteres acentuados incompatíveis com a memória de fontes padrão do módulo HD44780.
+A interface foi projetada para ser simples, intuitiva e compatível com as limitações de um display LCD 16x2, priorizando informações relevantes para a operação diária do sistema.
 
-### **9.2. Botões físicos**
-A proposta avalia o uso de três botões de comando com tratamento de repique via software (debounce):
-- **Anterior:** retorno ou navegação ascendente nos itens de menu.
-- **Próximo:** avanço ou navegação descendente nos itens de menu.
-- **Selecionar:** confirmação do parâmetro ou disparo da ação selecionada.
+---
 
-### **9.3. LEDs e buzzer**
-- **LEDs:** sinalizam visualmente estados de prontidão, nível crítico e atividade de atuadores.
-- **Buzzer:** emite alertas sonoros pontuais e controlados para advertir manutenção pendente ou falhas críticas, sem causar estresse ao animal alojado.
+### 9.2. Estrutura Física
 
-### **9.4. Limites da interface física**
-O display LCD é restrito à consulta rápida e ações pontuais. Diagnósticos detalhados, ajustes finos de calibração e parametrizações complexas são delegados à interface digital.
+A proposta utiliza:
 
+- 1 display LCD 16x2;
+- 3 botões de navegação;
+- 4 LEDs indicadores;
+- 1 buzzer para alertas sonoros;
+- Estrutura frontal com dimensões aproximadas de 25 cm × 9 cm.
+
+A organização visual será dividida em áreas destinadas à exibição das informações do sistema e à sinalização rápida de estados operacionais.
+
+---
+
+### 9.3. Navegação por Botões
+
+A navegação será realizada utilizando apenas três botões físicos:
+
+| Botão | Função Principal |
+|---------|---------|
+| `<` | Retornar tela ou diminuir valor |
+| `OK` | Confirmar seleção ou acessar submenu |
+| `>` | Avançar tela ou aumentar valor |
+
+Dependendo do contexto da tela, os mesmos botões poderão assumir funções secundárias relacionadas à edição de parâmetros.
+
+O firmware deverá aplicar tratamento de repique (*debounce*) para evitar leituras múltiplas indesejadas.
+
+---
+
+### 9.4. Sistema de Sinalização por LEDs
+
+O conjunto de LEDs permite identificar rapidamente o estado geral do sistema sem necessidade de consultar o display.
+
+`LED Verde` – Estado Geral
+
+Indica que o sistema encontra-se operacional.
+
+| Estado | Significado |
+|----------|----------|
+| Ligado fixo | Operação normal |
+| Piscando lentamente | Inicialização |
+| Desligado | Sistema indisponível |
+
+`LED Azul` – Atividade
+
+Indica a execução de operações controladas.
+
+Exemplos:
+
+- Alimentação automática;
+- Alimentação manual;
+- Hidratação automática;
+- Hidratação manual;
+- Rotinas de manutenção em execução.
+
+| Estado | Significado |
+|----------|----------|
+| Ligado fixo | Operação em andamento |
+| Desligado | Nenhuma operação ativa |
+
+`LED Amarelo` – Aviso
+
+Indica condições que exigem atenção, mas não impedem a operação do equipamento.
+
+Exemplos:
+
+- Reservatório de ração baixo;
+- Reservatório de água baixo;
+- Limpeza próxima do vencimento;
+- Perda de conectividade MQTT.
+
+| Estado | Significado |
+|----------|----------|
+| Piscando lentamente | Aviso ativo |
+| Desligado | Nenhum aviso |
+
+`LED Vermelho` – Falha Crítica
+
+Indica condições que comprometem a execução segura das funções automáticas.
+
+Exemplos:
+
+- Falha de sensor;
+- Falha do RTC;
+- Falha de comunicação interna;
+- Erro de atuador;
+- *Timeout* operacional.
+
+| Estado | Significado |
+|----------|----------|
+| Piscando rapidamente | Falha crítica |
+| Desligado | Nenhuma falha crítica |
+
+---
+
+### 9.5. Buzzer de Alerta
+
+O buzzer complementa os LEDs em situações que exigem atenção imediata.
+
+Ele será utilizado principalmente para:
+
+- Limpeza pendente;
+- Falha crítica de sistema;
+- Confirmação de comandos importantes;
+- Conclusão de determinadas operações.
+
+Para evitar desconforto ao animal, os alertas deverão utilizar sinais curtos e intermitentes, evitando acionamento contínuo prolongado.
+
+---
+
+### 9.6. Telas de Monitoramento
+
+A interface disponibilizará seis telas principais acessíveis por navegação circular.
+
+`Tela 1` – Home
+
+```text
+10:32 WiFi OK
+SB Operacional
+```
+
+Apresenta:
+
+- Hora atual;
+- Estado da conectividade;
+- Estado geral do SmartBird.
+
+`Tela 2` – Reservatórios
+
+```text
+Racao:78%
+Agua :65%
+```
+
+Apresenta o nível estimado dos reservatórios monitorados pelos sensores ultrassônicos.
+
+`Tela 3` – Comedouro e Bebedouro
+
+```text
+Com:18g
+Agua:OK
+```
+
+Apresenta a condição efetivamente disponível para consumo da ave.
+
+`Tela 4` – Próxima Ação
+
+```text
+Prox. Acao
+12:30 Alim
+```
+
+Mostra a próxima rotina programada.
+
+O botão `OK` abre o submenu de configuração de horários.
+
+`Tela 5` – Manutenção
+
+```text
+Limpeza
+34h restantes
+```
+
+Exibe o tempo restante até a próxima higienização recomendada.
+
+`Tela 6` – Conectividade
+
+```text
+WiFi:OK
+MQTT:OK
+```
+
+Permite verificar rapidamente o estado da infraestrutura IoT.
+
+---
+
+### 9.7. Configuração de Horários
+
+O SmartBird permitirá a configuração local dos horários de alimentação e hidratação sem necessidade da interface web.
+
+Cada módulo poderá possuir até quatro horários programados.
+
+A edição será realizada em incrementos de 30 minutos, simplificando a navegação e reduzindo a quantidade de interações necessárias.
+
+Exemplo:
+
+```text
+08:00
+08:30
+09:00
+09:30
+```
+
+Após a confirmação, o sistema apresentará uma mensagem temporária de sucesso.
+
+---
+
+### 9.8. Fluxo de Navegação
+
+```text
+HOME
+ ↓
+RESERVATÓRIOS
+ ↓
+COMEDOURO E BEBEDOURO
+ ↓
+PRÓXIMA AÇÃO
+ │
+ └── CONFIGURAÇÃO DE HORÁRIOS
+ ↓
+MANUTENÇÃO
+ ↓
+CONECTIVIDADE
+ ↓
+HOME
+```
+
+A navegação é circular e pode ser percorrida indefinidamente utilizando os botões de avanço e retorno.
+
+---
+
+## 9.9. Prioridade de Exibição
+
+Caso ocorra uma condição crítica, a interface poderá interromper temporariamente a tela atual para exibir uma mensagem de alerta.
+
+Exemplo:
+
+```text
+ERRO SENSOR
+RACAO INVALIDA
+```
+
+ou
+
+```text
+RTC FALHOU
+VERIFICAR MOD
+```
+
+Após um intervalo configurado, a interface retorna automaticamente à navegação normal.
+
+Essa estratégia garante que falhas relevantes sejam percebidas pelo usuário mesmo quando ele não estiver consultando a tela correspondente.
 ---
 
 ## **10. Interface Digital: Broker MQTT e Painel Web**
