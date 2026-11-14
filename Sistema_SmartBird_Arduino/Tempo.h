@@ -51,4 +51,17 @@ bool agendaPossuiHorarios(
 // Gera uma referência numérica para a data (AAAAMMDD)
 uint32_t obterDataReferencia(const DateTime& dataHora);
 
+// Identifica os horários que chegaram
+void verificarAgendamentos(
+  DadosSistema& dados,
+  const DateTime& agora
+);
+
+// Registra a conclusão de um agendamento
+bool registrarExecucaoConcluida(
+  AgendaDiaria& agenda,
+  uint8_t indice,
+  const DateTime& instanteConclusao
+);
+
 #endif

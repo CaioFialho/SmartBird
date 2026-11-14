@@ -63,48 +63,42 @@ bool ajustarDataHora(const DateTime& novaDataHora) {
 // ==========================================
 
 // Cadastra ou altera um horário
+
 bool definirHorario(
   AgendaDiaria& agenda,
   uint8_t indice,
   uint8_t hora,
   uint8_t minuto
 ) {
+  if (indice >= MAX_HORARIOS_DIARIOS) return false;
+  if (hora > 23 || minuto > 59) return false;
 
-  // Valida a posição
-  if (indice >= MAX_HORARIOS_DIARIOS) {
-    return false;
-  }
+  Horario& horario = agenda.horarios[indice];
 
-  // Valida o horário
-  if (hora > 23 || minuto > 59) {
-    return false;
-  }
+  // Não altera um horário com pendência ativa
+  if (horario.pendencia.ativa) return false;
 
-  // Impede horários duplicados
+  // Impede horários duplicados na mesma agenda
   for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
-
-    if (i == indice) {
-      continue;
-    }
+    if (i == indice) continue;
 
     if (agenda.horarios[i].ativo &&
         agenda.horarios[i].hora == hora &&
         agenda.horarios[i].minuto == minuto) {
-
       return false;
     }
   }
 
-  // Configura o horário
-  agenda.horarios[indice].hora = hora;
-  agenda.horarios[indice].minuto = minuto;
-  agenda.horarios[indice].ativo = true;
+  horario.hora = hora;
+  horario.minuto = minuto;
+  horario.ativo = true;
 
-  // Atualiza a quantidade de horários ativos
+  // Reinicia somente o registro diário
+  horario.registro = RegistroExecucao();
+
   agenda.quantidadeHorarios = 0;
 
   for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
-
     if (agenda.horarios[i].ativo) {
       agenda.quantidadeHorarios++;
     }
@@ -117,32 +111,26 @@ bool definirHorario(
 // REMOVER HORÁRIO
 // ==========================================
 
-bool removerHorario(
-  AgendaDiaria& agenda,
-  uint8_t indice
-) {
+bool removerHorario(AgendaDiaria& agenda, uint8_t indice) {
+  if (indice >= MAX_HORARIOS_DIARIOS) return false;
 
-  if (indice >= MAX_HORARIOS_DIARIOS) {
-    return false;
-  }
+  Horario& horario = agenda.horarios[indice];
 
-  if (!agenda.horarios[indice].ativo) {
-    return false;
-  }
+  if (!horario.ativo) return false;
 
-  // Desativa o horário
-  agenda.horarios[indice].ativo = false;
+  // Não permite remover horários com pendências
+  if (horario.pendencia.ativa) return false;
 
-  // Reinicia os dados do horário
-  agenda.horarios[indice].hora = 0;
-  agenda.horarios[indice].minuto = 0;
-  agenda.horarios[indice].registro = RegistroExecucao();
+  horario.ativo = false;
+  horario.hora = 0;
+  horario.minuto = 0;
 
-  // Atualiza a quantidade de horários ativos
+  horario.registro = RegistroExecucao();
+  horario.pendencia = RegistroPendencia();
+
   agenda.quantidadeHorarios = 0;
 
   for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
-
     if (agenda.horarios[i].ativo) {
       agenda.quantidadeHorarios++;
     }
@@ -195,4 +183,130 @@ uint32_t obterDataReferencia(const DateTime& dataHora) {
   uint32_t dia = dataHora.day();
 
   return (ano * 10000UL) + (mes * 100UL) + dia;
+}
+
+// ==========================================
+// VERIFICAÇÃO DE AGENDAMENTOS
+// ==========================================
+
+// Guarda o instante da última verificação
+static uint32_t ultimoInstanteVerificado = 0;
+
+// Verifica uma agenda individual
+static void verificarAgenda(
+  AgendaDiaria& agenda,
+  const DateTime& agora,
+  uint32_t instanteAnterior,
+  uint32_t instanteAtual,
+  uint32_t dataAtual
+) {
+  for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
+
+    Horario& horario = agenda.horarios[i];
+
+    if (!horario.ativo) continue;
+
+    RegistroExecucao& registro = horario.registro;
+    RegistroPendencia& pendencia = horario.pendencia;
+
+    // Já existe um registro para este horário hoje
+    if (registro.dataReferencia == dataAtual) {
+      continue;
+    }
+
+    // Monta o instante do horário programado
+    DateTime horarioProgramado(
+      agora.year(),
+      agora.month(),
+      agora.day(),
+      horario.hora,
+      horario.minuto,
+      0
+    );
+
+    uint32_t instanteProgramado = horarioProgramado.unixtime();
+
+    // Verifica se o horário chegou durante o funcionamento
+    if (instanteProgramado > instanteAnterior &&
+        instanteProgramado <= instanteAtual) {
+
+      // Registra a ocorrência do dia
+      registro.dataReferencia = dataAtual;
+      registro.horarioExecucaoEpoch = 0;
+      registro.estado = EstadoExecucao::PENDENTE;
+    }
+  }
+}
+
+// Função pública do módulo
+void verificarAgendamentos(
+  DadosSistema& dados,
+  const DateTime& agora
+) {
+  uint32_t instanteAtual = agora.unixtime();
+
+  // Primeira consulta: estabelece o ponto inicial.
+  // Não executa horários que já passaram antes da inicialização.
+  if (ultimoInstanteVerificado == 0) {
+    ultimoInstanteVerificado = instanteAtual;
+    return;
+  }
+
+  // Se o relógio retroceder, reinicia a referência.
+  if (instanteAtual < ultimoInstanteVerificado) {
+    ultimoInstanteVerificado = instanteAtual;
+    return;
+  }
+
+  uint32_t dataAtual = obterDataReferencia(agora);
+
+  verificarAgenda(
+    dados.agendaAlimentacao,
+    agora,
+    ultimoInstanteVerificado,
+    instanteAtual,
+    dataAtual
+  );
+
+  verificarAgenda(
+    dados.agendaHidratacao,
+    agora,
+    ultimoInstanteVerificado,
+    instanteAtual,
+    dataAtual
+  );
+
+  ultimoInstanteVerificado = instanteAtual;
+}
+
+
+bool registrarExecucaoConcluida(
+  AgendaDiaria& agenda,
+  uint8_t indice,
+  const DateTime& instanteConclusao
+) {
+  if (indice >= MAX_HORARIOS_DIARIOS) return false;
+
+  Horario& horario = agenda.horarios[indice];
+
+  if (!horario.ativo) return false;
+
+  // Só confirma um agendamento que estava aguardando execução
+  if (horario.registro.estado != EstadoExecucao::PENDENTE) {
+    return false;
+  }
+
+  // Registra a conclusão do agendamento
+  horario.registro.dataReferencia =
+    obterDataReferencia(instanteConclusao);
+
+  horario.registro.horarioExecucaoEpoch =
+    instanteConclusao.unixtime();
+
+  horario.registro.estado = EstadoExecucao::EXECUTADO;
+
+  // Uma execução programada bem-sucedida resolve a pendência anterior
+  horario.pendencia = RegistroPendencia();
+
+  return true;
 }
