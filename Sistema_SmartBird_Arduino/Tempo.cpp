@@ -140,6 +140,147 @@ bool removerHorario(AgendaDiaria& agenda, uint8_t indice) {
 }
 
 // ==========================================
+// SINCRONIZAR AGENDA COMPLETA
+// ==========================================
+
+bool sincronizarAgenda(
+  AgendaDiaria& agenda,
+  const uint8_t horas[],
+  const uint8_t minutos[],
+  uint8_t quantidade
+) {
+
+  // Valida a quantidade recebida
+  if (quantidade > MAX_HORARIOS_DIARIOS) {
+    return false;
+  }
+
+  // Verifica se os vetores foram fornecidos
+  if (quantidade > 0 && (horas == nullptr || minutos == nullptr)) {
+    return false;
+  }
+
+  // Valida os horários recebidos
+  for (uint8_t i = 0; i < quantidade; i++) {
+
+    if (horas[i] > 23 || minutos[i] > 59) {
+      return false;
+    }
+
+    // Impede horários duplicados na lista recebida
+    for (uint8_t j = i + 1; j < quantidade; j++) {
+
+      if (horas[i] == horas[j] &&
+          minutos[i] == minutos[j]) {
+        return false;
+      }
+    }
+  }
+
+  // Copia a agenda atual para trabalhar sem alterar a original
+  AgendaDiaria novaAgenda = agenda;
+
+  // Identifica os horários que devem ser preservados
+  bool manter[MAX_HORARIOS_DIARIOS] = {};
+
+  for (uint8_t i = 0; i < quantidade; i++) {
+
+    for (uint8_t j = 0; j < MAX_HORARIOS_DIARIOS; j++) {
+
+      Horario& atual = novaAgenda.horarios[j];
+
+      if (atual.ativo &&
+          atual.hora == horas[i] &&
+          atual.minuto == minutos[i]) {
+
+        manter[j] = true;
+        break;
+      }
+    }
+  }
+
+  // Remove os horários que não estão mais na lista
+  for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
+
+    Horario& horario = novaAgenda.horarios[i];
+
+    if (!horario.ativo || manter[i]) {
+      continue;
+    }
+
+    // Não permite perder uma pendência ativa
+    if (horario.pendencia.ativa) {
+      return false;
+    }
+
+    // Libera a posição
+    horario = Horario();
+  }
+
+  // Adiciona os horários novos nas posições livres
+  for (uint8_t i = 0; i < quantidade; i++) {
+
+    bool jaExiste = false;
+
+    // Verifica se o horário já foi preservado
+    for (uint8_t j = 0; j < MAX_HORARIOS_DIARIOS; j++) {
+
+      const Horario& horario = novaAgenda.horarios[j];
+
+      if (horario.ativo &&
+          horario.hora == horas[i] &&
+          horario.minuto == minutos[i]) {
+
+        jaExiste = true;
+        break;
+      }
+    }
+
+    if (jaExiste) {
+      continue;
+    }
+
+    // Procura a primeira posição livre
+    bool inserido = false;
+
+    for (uint8_t j = 0; j < MAX_HORARIOS_DIARIOS; j++) {
+
+      Horario& horario = novaAgenda.horarios[j];
+
+      if (!horario.ativo) {
+
+        horario.hora = horas[i];
+        horario.minuto = minutos[i];
+        horario.ativo = true;
+
+        inserido = true;
+        break;
+      }
+    }
+
+    // Segurança: não permite inserção incompleta
+    if (!inserido) {
+      return false;
+    }
+  }
+
+  // Recalcula a quantidade de horários ativos
+  novaAgenda.quantidadeHorarios = 0;
+
+  for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
+
+    if (novaAgenda.horarios[i].ativo) {
+      novaAgenda.quantidadeHorarios++;
+    }
+  }
+
+  // Confirma a atualização
+  agenda = novaAgenda;
+
+  return true;
+}
+
+// ==========================================
 // VERIFICAR SE HORÁRIO ESTÁ ATIVO
 // ==========================================
 
@@ -195,46 +336,73 @@ static uint32_t ultimoInstanteVerificado = 0;
 // Verifica uma agenda individual
 static void verificarAgenda(
   AgendaDiaria& agenda,
-  const DateTime& agora,
   uint32_t instanteAnterior,
-  uint32_t instanteAtual,
-  uint32_t dataAtual
+  uint32_t instanteAtual
 ) {
-  for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
 
-    Horario& horario = agenda.horarios[i];
+  // Identifica o início do dia da última verificação
+  DateTime dataInicial(instanteAnterior);
 
-    if (!horario.ativo) continue;
+  uint32_t inicioDia = DateTime(
+    dataInicial.year(),
+    dataInicial.month(),
+    dataInicial.day(),
+    0, 0, 0
+  ).unixtime();
 
-    RegistroExecucao& registro = horario.registro;
-    RegistroPendencia& pendencia = horario.pendencia;
+  // Percorre todos os dias dentro do intervalo
+  while (inicioDia <= instanteAtual) {
 
-    // Já existe um registro para este horário hoje
-    if (registro.dataReferencia == dataAtual) {
-      continue;
+    DateTime dataDia(inicioDia);
+
+    for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
+
+      Horario& horario = agenda.horarios[i];
+
+      if (!horario.ativo) {
+        continue;
+      }
+
+      RegistroExecucao& registro = horario.registro;
+
+      // Não sobrescreve uma execução ainda pendente
+      if (registro.estado == EstadoExecucao::PENDENTE) {
+        continue;
+      }
+
+      // Monta o instante programado para este dia
+      DateTime horarioProgramado(
+        dataDia.year(),
+        dataDia.month(),
+        dataDia.day(),
+        horario.hora,
+        horario.minuto,
+        0
+      );
+
+      uint32_t instanteProgramado =
+        horarioProgramado.unixtime();
+
+      // Já existe um registro deste horário para esse dia
+      uint32_t dataReferencia =
+        obterDataReferencia(horarioProgramado);
+
+      if (registro.dataReferencia == dataReferencia) {
+        continue;
+      }
+
+      // Verifica se o horário chegou dentro do intervalo
+      if (instanteProgramado > instanteAnterior &&
+          instanteProgramado <= instanteAtual) {
+
+        registro.dataReferencia = dataReferencia;
+        registro.horarioExecucaoEpoch = 0;
+        registro.estado = EstadoExecucao::PENDENTE;
+      }
     }
 
-    // Monta o instante do horário programado
-    DateTime horarioProgramado(
-      agora.year(),
-      agora.month(),
-      agora.day(),
-      horario.hora,
-      horario.minuto,
-      0
-    );
-
-    uint32_t instanteProgramado = horarioProgramado.unixtime();
-
-    // Verifica se o horário chegou durante o funcionamento
-    if (instanteProgramado > instanteAnterior &&
-        instanteProgramado <= instanteAtual) {
-
-      // Registra a ocorrência do dia
-      registro.dataReferencia = dataAtual;
-      registro.horarioExecucaoEpoch = 0;
-      registro.estado = EstadoExecucao::PENDENTE;
-    }
+    // Avança para o próximo dia
+    inicioDia += 86400UL;
   }
 }
 
@@ -243,69 +411,76 @@ void verificarAgendamentos(
   DadosSistema& dados,
   const DateTime& agora
 ) {
+
   uint32_t instanteAtual = agora.unixtime();
 
-  // Primeira consulta: estabelece o ponto inicial.
-  // Não executa horários que já passaram antes da inicialização.
+  // Primeira consulta: estabelece o ponto inicial
   if (ultimoInstanteVerificado == 0) {
+
     ultimoInstanteVerificado = instanteAtual;
     return;
   }
 
-  // Se o relógio retroceder, reinicia a referência.
+  // Se o relógio retroceder, reinicia a referência
   if (instanteAtual < ultimoInstanteVerificado) {
+
     ultimoInstanteVerificado = instanteAtual;
     return;
   }
 
-  uint32_t dataAtual = obterDataReferencia(agora);
-
+  // Verifica os agendamentos de alimentação
   verificarAgenda(
     dados.agendaAlimentacao,
-    agora,
     ultimoInstanteVerificado,
-    instanteAtual,
-    dataAtual
+    instanteAtual
   );
 
+  // Verifica os agendamentos de hidratação
   verificarAgenda(
     dados.agendaHidratacao,
-    agora,
     ultimoInstanteVerificado,
-    instanteAtual,
-    dataAtual
+    instanteAtual
   );
 
+  // Atualiza o instante da última verificação
   ultimoInstanteVerificado = instanteAtual;
 }
 
+
+// ==========================================
+// REGISTRAR EXECUÇÃO CONCLUÍDA
+// ==========================================
 
 bool registrarExecucaoConcluida(
   AgendaDiaria& agenda,
   uint8_t indice,
   const DateTime& instanteConclusao
 ) {
-  if (indice >= MAX_HORARIOS_DIARIOS) return false;
+  if (indice >= MAX_HORARIOS_DIARIOS) {
+    return false;
+  }
 
   Horario& horario = agenda.horarios[indice];
 
-  if (!horario.ativo) return false;
+  if (!horario.ativo) {
+    return false;
+  }
 
-  // Só confirma um agendamento que estava aguardando execução
+  // Só confirma um agendamento pendente
   if (horario.registro.estado != EstadoExecucao::PENDENTE) {
     return false;
   }
 
-  // Registra a conclusão do agendamento
-  horario.registro.dataReferencia =
-    obterDataReferencia(instanteConclusao);
+  // Preserva a data original do agendamento
+  // Não altera registro.dataReferencia
 
+  // Registra o instante real da conclusão
   horario.registro.horarioExecucaoEpoch =
     instanteConclusao.unixtime();
 
   horario.registro.estado = EstadoExecucao::EXECUTADO;
 
-  // Uma execução programada bem-sucedida resolve a pendência anterior
+  // Resolve a pendência após a execução bem-sucedida
   horario.pendencia = RegistroPendencia();
 
   return true;

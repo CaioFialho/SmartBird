@@ -64,4 +64,12 @@ bool registrarExecucaoConcluida(
   const DateTime& instanteConclusao
 );
 
+// Sincroniza a agenda com uma lista completa de horários
+bool sincronizarAgenda(
+  AgendaDiaria& agenda,
+  const uint8_t horas[],
+  const uint8_t minutos[],
+  uint8_t quantidade
+);
+
 #endif
