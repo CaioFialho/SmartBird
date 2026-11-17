@@ -1,10 +1,10 @@
 # SmartBird — Protocolo de Comunicação
 
 **Projeto:** SmartBird  
-**Versão:** 0.2.0  
+**Versão:** 0.2.1  
 **Status:** Proposta revisada — sujeita à validação e aos testes de integração  
 **Controlador principal:** Arduino Mega 2560  
-**Ponte de comunicação:** ESP32  
+**Ponte de comunicação:** ESP8266  
 **Transporte externo:** MQTT  
 **Transporte interno:** UART TTL  
 **Formato:** JSON
@@ -13,7 +13,7 @@
 
 ## 1. Objetivo e escopo
 
-Este documento define o contrato de comunicação entre a Aplicação Web, o broker MQTT, o ESP32 e o Arduino Mega 2560 do SmartBird.
+Este documento define o contrato de comunicação entre a Aplicação Web, o broker MQTT, o ESP8266 e o Arduino Mega 2560 do SmartBird.
 
 São padronizados o encaminhamento de comandos, ACKs, respostas, telemetria, eventos, erros, sincronização do RTC, configuração de agendas e parâmetros operacionais, além do tratamento de falhas e perda de comunicação.
 
@@ -33,7 +33,7 @@ Os exemplos são ilustrativos. Parâmetros ainda não definidos pelo projeto est
          │ MQTT / Wi-Fi
          ▼
 ┌──────────────────┐
-│      ESP32       │
+│      ESP8266       │
 │ Ponte MQTT/UART  │
 └────────┬─────────┘
          │ UART + JSON + \n
@@ -56,60 +56,60 @@ A Web apresenta o estado do equipamento, monta mensagens JSON, publica comandos 
 
 A Web também obtém a data e o horário de referência e os envia ao Arduino por meio do comando `sync_time`. A aplicação não deverá considerar uma operação concluída apenas porque publicou uma mensagem MQTT.
 
-### 2.2. ESP32
+### 2.2. ESP8266
 
-O ESP32 atua como **ponte transparente MQTT/UART**. Suas responsabilidades são conectar-se ao Wi-Fi e ao broker MQTT, assinar os tópicos destinados ao dispositivo, retransmitir payloads MQTT pela UART e publicar no MQTT os payloads recebidos do Arduino.
+O ESP8266 atua como **ponte transparente MQTT/UART**. Suas responsabilidades são conectar-se ao Wi-Fi e ao broker MQTT, assinar os tópicos destinados ao dispositivo, retransmitir payloads MQTT pela UART e publicar no MQTT os payloads recebidos do Arduino.
 
-O ESP32 deverá preservar o conteúdo JSON: não deverá interpretar, reconstruir, alterar campos ou aplicar regras de negócio. Poderá tratar metadados necessários ao transporte, como tópico e estado da conexão, sem modificar o payload.
+O ESP8266 deverá preservar o conteúdo JSON: não deverá interpretar, reconstruir, alterar campos ou aplicar regras de negócio. Poderá tratar metadados necessários ao transporte, como tópico e estado da conexão, sem modificar o payload.
 
-O ESP32 não decide se uma operação é segura, não gerencia agendas, não atualiza o RTC por conta própria e não controla diretamente os atuadores.
+O ESP8266 não decide se uma operação é segura, não gerencia agendas, não atualiza o RTC por conta própria e não controla diretamente os atuadores.
 
 ### 2.3. Arduino Mega 2560
 
 O Arduino é o controlador principal e a autoridade sobre o estado físico e operacional. Ele recebe mensagens completas, interpreta e valida JSON, verifica parâmetros e condições de segurança, executa ou recusa comandos, gerencia sensores, atuadores, agendas, manutenção e RTC, e produz ACKs, respostas, telemetria, eventos e erros.
 
-As funções essenciais deverão continuar operando mesmo sem ESP32, Wi-Fi ou broker MQTT.
+As funções essenciais deverão continuar operando mesmo sem ESP8266, Wi-Fi ou broker MQTT.
 
 ### 2.4. Princípio de autoridade
 
-O Arduino é a fonte de verdade sobre o estado operacional do SmartBird. A Web apresenta os dados recebidos, mas não presume que uma ação ocorreu sem confirmação do Arduino. O ESP32 transporta mensagens, mas não interpreta seu significado operacional.
+O Arduino é a fonte de verdade sobre o estado operacional do SmartBird. A Web apresenta os dados recebidos, mas não presume que uma ação ocorreu sem confirmação do Arduino. O ESP8266 transporta mensagens, mas não interpreta seu significado operacional.
 
 ## 3. Camadas de comunicação
 
 ### 3.1. MQTT
 
-A comunicação entre Web e ESP32 ocorre por meio de um broker MQTT. O MQTT transporta os payloads, mas não substitui o protocolo de aplicação definido aqui.
+A comunicação entre Web e ESP8266 ocorre por meio de um broker MQTT. O MQTT transporta os payloads, mas não substitui o protocolo de aplicação definido aqui.
 
 A conexão deverá utilizar autenticação e, quando disponível no ambiente de implantação, TLS. Credenciais não deverão ser incluídas nos payloads JSON.
 
 ### 3.2. UART
 
-A comunicação entre ESP32 e Arduino será realizada por UART TTL.
+A comunicação entre ESP8266 e Arduino será realizada por UART TTL.
 
 | Parâmetro | Configuração proposta |
 |---|---|
 | Protocolo físico | UART TTL |
-| Velocidade | 115200 baud |
+| Velocidade | 9600 baud |
 | Bits de dados | 8 |
 | Paridade | Nenhuma |
 | Bits de parada | 1 |
 | Formato | JSON |
 | Delimitador | `\n` |
 | UART do Mega | Serial1 |
-| TX1 do Mega | Pino 18 |
-| RX1 do Mega | Pino 19 |
+| Pinos do Mega | TX1 (Pino 18) e RX1 (Pino 19) |
+| Pinos do ESP8266 | RX em D5 (GPIO14) e TX em D6 (GPIO12) |
 
 115200 baud é uma configuração inicial, sujeita a confirmação nos testes.
 
 ### 3.3. Conexões elétricas
 
-| Arduino Mega 2560 | ESP32 | Finalidade |
+| Arduino Mega 2560 | ESP8266 | Finalidade |
 |---|---|---|
-| TX1 — pino 18 | RX do ESP32, por conversor de nível lógico | Mega → ESP32 |
-| RX1 — pino 19 | TX do ESP32 | ESP32 → Mega |
+| TX1 — pino 18 | RX — pino D5 (GPIO14), por conversor de nível | Mega → ESP8266 |
+| RX1 — pino 19 | TX — pino D6 (GPIO12), por conversor de nível | ESP8266 → Mega |
 | GND | GND | Referência comum |
 
-**Atenção:** o Mega utiliza lógica de 5 V e o ESP32 utiliza lógica de 3,3 V. O TX1 do Mega deverá passar por conversor de nível lógico adequado antes de chegar ao RX do ESP32. Não conectar diretamente 5 V à entrada do ESP32. A UART principal (`Serial`) do Mega deverá permanecer disponível para depuração.
+**Atenção:** o Mega utiliza lógica de 5 V e o ESP8266 utiliza lógica de 3,3 V. O TX1 do Mega deverá passar por conversor de nível lógico adequado antes de chegar ao RX do ESP8266. Não conectar diretamente 5 V à entrada do ESP8266. A UART principal (`Serial`) do Mega deverá permanecer disponível para depuração.
 
 ## 4. Enquadramento das mensagens UART
 
@@ -131,7 +131,7 @@ Regras:
 - O receptor valida a mensagem completa antes de executar qualquer ação.
 - O firmware deverá impor um limite máximo de bytes por mensagem.
 
-Ao exceder o limite do buffer, o receptor descarta os bytes até o próximo `\n`, registra a ocorrência e não executa conteúdo parcial. **O tamanho numérico máximo do buffer ainda deverá ser definido e testado.**
+Ao exceder o limite do buffer, o receptor descarta os bytes até o próximo `\n`, registra a ocorrência e não executa conteúdo parcial. **O tamanho máximo numérico do buffer está estabelecido em 1024 bytes**, o que garante a leitura completa de payloads estruturados sem truncamento de dados ou estouro de memória.
 
 ## 5. Estrutura padrão JSON
 
@@ -155,7 +155,7 @@ Ao exceder o limite do buffer, o receptor descarta os bytes até o próximo `\n`
 
 ### 5.3. Origem (`source`)
 
-`source` identifica quem originou logicamente a mensagem, não o último equipamento que a transportou. Valores previstos: `web` e `arduino`. O ESP32 não substitui `source` por `esp32`, pois atua apenas como ponte.
+`source` identifica quem originou logicamente a mensagem, não o último equipamento que a transportou. Valores previstos: `web` e `arduino`. O ESP8266 não substitui `source` por `ESP8266`, pois atua apenas como ponte.
 
 ### 5.4. Identificador (`id`)
 
@@ -567,7 +567,7 @@ Campos e limites são ilustrativos. O Arduino deverá rejeitar valores fora dos 
 
 ### 11.1. Responsabilidade e funcionamento
 
-A Aplicação Web envia data e horário ao Arduino por meio do comando `sync_time`. O ESP32 recebe o payload MQTT e o retransmite pela UART sem interpretar ou modificar o JSON. O Arduino valida os dados e atualiza o RTC.
+A Aplicação Web envia data e horário ao Arduino por meio do comando `sync_time`. O ESP8266 recebe o payload MQTT e o retransmite pela UART sem interpretar ou modificar o JSON. O Arduino valida os dados e atualiza o RTC.
 
 Após a sincronização, o RTC continua contando o tempo localmente. Agendas e rotinas não dependerão de conexão permanente com Web, Wi-Fi ou broker MQTT.
 
@@ -796,13 +796,11 @@ Convenção externa proposta:
 
 ### 16.1. Convenção proposta
 
+A arquitetura foi simplificada para utilizar estritamente dois tópicos principais, centralizando o fluxo e facilitando a manutenção:
+
 ```text
-smartbird/{device_id}/command
-smartbird/{device_id}/ack
-smartbird/{device_id}/response
-smartbird/{device_id}/telemetry
-smartbird/{device_id}/event
-smartbird/{device_id}/error
+smartbird/{device_id}/comandos
+smartbird/{device_id}/status
 ```
 
 `{device_id}` identificará unicamente cada equipamento SmartBird; seu valor definitivo ainda deverá ser definido.
@@ -811,20 +809,16 @@ smartbird/{device_id}/error
 
 | Tópico | Publicador | Assinante principal | Conteúdo |
 |---|---|---|---|
-| `smartbird/{device_id}/command` | Web | ESP32 | Comandos para o Arduino |
-| `smartbird/{device_id}/ack` | ESP32, encaminhando Arduino | Web | ACKs do Arduino |
-| `smartbird/{device_id}/response` | ESP32, encaminhando Arduino | Web | Respostas do Arduino |
-| `smartbird/{device_id}/telemetry` | ESP32, encaminhando Arduino | Web | Telemetria |
-| `smartbird/{device_id}/event` | ESP32, encaminhando Arduino | Web | Eventos |
-| `smartbird/{device_id}/error` | ESP32, encaminhando Arduino | Web | Erros |
+| `smartbird/{device_id}/comandos` | Web | ESP8266 | Comandos e solicitações originadas da Web |
+| `smartbird/{device_id}/status` | ESP8266 (encaminhando Arduino) | Web | ACKs, respostas, telemetria, eventos e erros |
 
-O ESP32 não modifica o payload. O tópico identifica o canal de transporte; o JSON mantém o contrato de aplicação.
+O ESP8266 não modifica o payload. O tópico identifica o canal de transporte; o JSON mantém o contrato de aplicação.
 
 ### 16.3. QoS e retained
 
-A política deverá ser definida durante a implementação. Como orientação inicial, comandos e respostas exigem entrega confiável e correlação por `id`; telemetria poderá utilizar política mais leve se a Web identificar dados desatualizados; eventos importantes poderão exigir QoS maior e reenvio.
+O sistema utilizará **QoS 1 (At least once)** no canal de comandos (`/comandos`) para garantir a entrega confiável das solicitações críticas originadas pela aplicação Web. Para o canal de respostas e telemetria (`/status`), será utilizado **QoS 0 (At most once)**.
 
-Comandos não deverão ser retidos de modo que um comando antigo seja executado inesperadamente após reconexão. O uso de retained para estado atual deverá ser avaliado separadamente.
+**Mensagens retidas (retained):** Nenhuma mensagem de comando, acionamento ou status utilizará a flag *retained*. Isso previne estritamente que comandos antigos fiquem agarrados no broker e sejam executados de forma indesejada pelo equipamento logo após uma reconexão de rede.
 
 **QoS MQTT não substitui ACK de aplicação.** Confirmação de entrega MQTT não significa que o Arduino recebeu, validou ou executou o comando.
 
@@ -859,11 +853,11 @@ A Web não deverá reenviar automaticamente comandos de acionamento sem consulta
 
 ### 18.3. Perda de MQTT ou Wi-Fi
 
-O Arduino continua executando agendas e controles locais. O ESP32 tenta restabelecer a conexão. A Web indica desconexão ou dados desatualizados. A estratégia de armazenamento e reenvio de eventos deverá ser definida.
+O Arduino continua executando agendas e controles locais. O ESP8266 tenta restabelecer a conexão. A Web indica desconexão ou dados desatualizados. A estratégia de armazenamento e reenvio de eventos deverá ser definida.
 
 ### 18.4. Perda de UART
 
-O ESP32 detecta ausência de comunicação conforme a estratégia implementada. O Arduino mantém funções locais. O ESP32 não apresenta comandos como executados sem resposta do Arduino. Após recuperação, a Web poderá consultar o estado atual.
+O ESP8266 detecta ausência de comunicação conforme a estratégia implementada. O Arduino mantém funções locais. O ESP8266 não apresenta comandos como executados sem resposta do Arduino. Após recuperação, a Web poderá consultar o estado atual.
 
 ### 18.5. Mensagem incompleta ou buffer excedido
 
@@ -885,14 +879,14 @@ O receptor descarta conteúdo incompleto conforme timeout ou limite do buffer e 
 
 A camada de comunicação transporta mensagens; a camada de protocolo interpreta conteúdo; módulos operacionais executam suas regras.
 
-### 19.2. ESP32
+### 19.2. ESP8266
 
 - `WiFi_Manager`: conexão e reconexão Wi-Fi.
 - `MQTT_Client`: conexão, assinatura e publicação MQTT.
 - `UART_Bridge`: encaminhamento transparente entre MQTT e UART.
 - `Connection_Manager`: acompanhamento das conexões.
 
-O ESP32 não implementa regras de alimentação, hidratação, agenda ou manutenção.
+O ESP8266 não implementa regras de alimentação, hidratação, agenda ou manutenção.
 
 ### 19.3. Aplicação Web
 
@@ -906,7 +900,7 @@ O ESP32 não implementa regras de alimentação, hidratação, agenda ou manuten
 ## 20. Critérios de validação
 
 - [ ] Web publica comandos no tópico correto.
-- [ ] ESP32 retransmite payload MQTT sem alterações.
+- [ ] ESP8266 retransmite payload MQTT sem alterações.
 - [ ] Arduino recompõe corretamente mensagens UART fragmentadas.
 - [ ] JSON válido é interpretado corretamente.
 - [ ] Mensagens inválidas não provocam acionamentos.
@@ -922,21 +916,18 @@ O ESP32 não implementa regras de alimentação, hidratação, agenda ou manuten
 - [ ] Eventos e falhas são encaminhados corretamente.
 - [ ] Comandos duplicados não provocam acionamentos repetidos.
 - [ ] Buffer excedido não resulta em execução parcial.
-- [ ] Perda de Wi-Fi, MQTT ou ESP32 não interrompe rotinas locais.
+- [ ] Perda de Wi-Fi, MQTT ou ESP8266 não interrompe rotinas locais.
 - [ ] Web apresenta dados desatualizados ou indisponíveis corretamente.
 
 ## 21. Decisões pendentes
 
 - [ ] Identificador definitivo (`device_id`).
-- [ ] Confirmação da velocidade UART de 115200 baud.
-- [ ] Tamanho máximo do buffer UART.
 - [ ] Biblioteca JSON e dimensionamento de memória no Mega.
 - [ ] Campos e limites finais de `set_feeding_config`.
 - [ ] Campos e limites finais de `set_watering_config`.
 - [ ] Estrutura final de `set_schedule` e `remove_schedule`.
 - [ ] Persistência das agendas.
 - [ ] Frequência de telemetria.
-- [ ] QoS e retained por tópico MQTT.
 - [ ] Identificador único de evento e política de reenvio.
 - [ ] Timeouts de ACK, response e UART.
 - [ ] Retenção de identificadores para deduplicação.
@@ -951,15 +942,16 @@ O ESP32 não implementa regras de alimentação, hidratação, agenda ou manuten
 | Versão | Alterações |
 |---|---|
 | `0.1.0` | Estrutura inicial, tipos de mensagem, comandos e regras preliminares |
-| `0.2.0` | Arquitetura de ponte ESP32 transparente; tópicos MQTT; ciclo Request/ACK/Response; protocolos de configuração, eventos, telemetria e sincronização RTC iniciada pela Web |
+| `0.2.0` | Arquitetura de ponte ESP8266 transparente; tópicos MQTT; ciclo Request/ACK/Response; protocolos de configuração, eventos, telemetria e sincronização RTC iniciada pela Web |
+| `0.2.1` | Adaptação para ESP8266 NodeMCU V3; redução da UART para 9600 baud via SoftwareSerial (pinos D5 e D6); fixação do buffer UART em 1024 bytes; consolidação para apenas 2 tópicos MQTT (`comandos` e `status`); definição de QoS (1 e 0) e proibição de mensagens retidas (retained) |
 | `1.0.0` | A definir após validação da equipe e testes de integração |
 
 ## 23. Manutenção do documento
 
-Toda alteração incompatível deverá ser discutida antes de modificar os firmwares da Web, ESP32 ou Arduino. Os três componentes deverão utilizar a mesma versão do protocolo.
+Toda alteração incompatível deverá ser discutida antes de modificar os firmwares da Web, ESP8266 ou Arduino. Os três componentes deverão utilizar a mesma versão do protocolo.
 
 A implementação deverá seguir este documento. Se os testes exigirem mudanças, elas deverão ser registradas aqui antes ou junto da atualização do código.
 
 ---
 
-**Fim do documento — SmartBird Protocolo de Comunicação v0.2.0**
+**Fim do documento — SmartBird Protocolo de Comunicação v0.2.1**
