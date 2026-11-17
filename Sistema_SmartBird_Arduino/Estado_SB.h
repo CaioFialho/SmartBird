@@ -46,23 +46,31 @@ enum class EstadoExecucao {
 // STRUCTS - REGISTROS E AGENDAMENTOS
 // ==========================================
 
-// Registro de execução de um horário
+
 struct RegistroExecucao {
   uint32_t dataReferencia = 0;
   uint32_t horarioExecucaoEpoch = 0;
-
   EstadoExecucao estado = EstadoExecucao::AGUARDANDO;
 };
 
-// Representação de um horário
+// Guarda uma ocorrência que ainda não foi resolvida
+struct RegistroPendencia {
+  uint32_t dataReferencia = 0;
+  uint32_t horarioOcorrenciaEpoch = 0;
+
+  EstadoExecucao estado = EstadoExecucao::AGUARDANDO;
+  bool ativa = false;
+};
+
 struct Horario {
   uint8_t hora = 0;
   uint8_t minuto = 0;
-
   bool ativo = false;
 
   RegistroExecucao registro;
+  RegistroPendencia pendencia;
 };
+
 
 // Limite de horários por módulo
 constexpr uint8_t MAX_HORARIOS_DIARIOS = 4;
