@@ -25,4 +25,11 @@ constexpr uint8_t HX711_DT_ALIMENTO = 26;
 constexpr uint8_t HX711_SCK_ALIMENTO = 27;
 constexpr uint8_t SERVO_COMPORTA = 28;
 
+// ==========================================
+// MÓDULO HIDRATAÇÃO
+// ==========================================
+
+constexpr uint8_t RELE_BOMBA_AGUA = 29;
+constexpr uint8_t SENSOR_BOIA_AGUA = 30;
+
 #endif
