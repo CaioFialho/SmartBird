@@ -17,4 +17,12 @@ constexpr uint8_t ECHO_ALIMENTO = 23;
 constexpr uint8_t TRIG_AGUA = 24;
 constexpr uint8_t ECHO_AGUA = 25;
 
+// ==========================================
+// MÓDULO ALIMENTAÇÃO
+// ==========================================
+
+constexpr uint8_t HX711_DT_ALIMENTO = 26;
+constexpr uint8_t HX711_SCK_ALIMENTO = 27;
+constexpr uint8_t SERVO_COMPORTA = 28;
+
 #endif
