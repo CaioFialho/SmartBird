@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1B4332">
+  <title>SmartBird | Painel da gaiola</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    if (window.tailwind) {
+      tailwind.config = { theme: { extend: { colors: {
+        'sb-beige': '#F7F4EB', 'sb-beige-dark': '#EFECE1', 'sb-green-dark': '#1B4332',
+        'sb-green': '#2D6A4F', 'sb-green-light': '#40916C', 'sb-orange': '#F77F00',
+        'sb-orange-dark': '#E36414', 'sb-red': '#D62828'
+      } } } };
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main id="login" class="login">
+    <div class="login-brand">
+      <div class="brand-emblem"><img src="Logo_SmartBird.jpg" alt="Logo SmartBird"></div>
+      <strong>SmartBird</strong>
+      <p>Alimentação, hidratação e monitoramento para aves.</p>
+    </div>
+    <div class="login-content">
+      <form id="login-form" class="login-form">
+        <div class="login-intro">
+          <span class="icon-box"><i class="fa-solid fa-lock" aria-hidden="true"></i></span>
+          <h1>Conectar à gaiola</h1>
+          <p>Entre com as credenciais do broker EMQX para acessar o painel.</p>
+        </div>
+        <label for="username">Usuário EMQX</label>
+        <input id="username" name="username" autocomplete="username" required>
+        <label for="password">Senha EMQX</label>
+        <div class="password-field">
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button id="show-password" type="button" class="icon-button" aria-label="Mostrar senha" aria-pressed="false"><i class="fa-solid fa-eye" aria-hidden="true"></i></button>
+        </div>
+        <label class="check"><input name="remember" type="checkbox"> Lembrar acesso neste dispositivo</label>
+        <details class="advanced">
+          <summary>Configurações avançadas</summary>
+          <div class="field-grid">
+            <label class="wide">Host <input name="host" value="x1901c96.ala.eu-central-1.emqxsl.com" required></label>
+            <label>Porta WSS <input name="port" type="number" min="1" max="65535" value="8084" required></label>
+            <label>Path <input name="path" value="/mqtt" required></label>
+            <label class="wide">Device ID <input name="deviceId" value="gaiola01" required></label>
+          </div>
+        </details>
+        <p id="login-error" class="error-text" role="alert" hidden></p>
+        <button id="connect" class="button primary full" type="submit">Conectar à gaiola <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+      </form>
+    </div>
+  </main>
+
+  <div id="dashboard-app" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-brand"><img src="Logo_SmartBird.jpg" alt="Logo SmartBird"><span>SmartBird</span></div>
+      <nav id="navigation" aria-label="Navegação principal">
+        <button class="nav-link" type="button" data-view="dashboard" aria-current="page"><i class="fa-solid fa-table-columns" aria-hidden="true"></i> Dashboard</button>
+        <button class="nav-link" type="button" data-view="schedules"><i class="fa-regular fa-calendar" aria-hidden="true"></i> Agendamentos</button>
+        <button class="nav-link" type="button" data-view="settings"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Configurações</button>
+        <button class="nav-link" type="button" data-view="diagnostics"><i class="fa-solid fa-terminal" aria-hidden="true"></i> Diagnóstico</button>
+      </nav>
+      <button class="sidebar-events" type="button" data-open-events><i class="fa-regular fa-bell" aria-hidden="true"></i> Notificações <span class="counter" data-unread hidden></span></button>
+      <p class="sidebar-device"><i class="fa-solid fa-microchip" aria-hidden="true"></i> <span id="sidebar-device"></span></p>
+    </aside>
+
+    <main class="workspace">
+      <div class="sticky-top">
+        <header class="topbar">
+          <span id="connection-badge" class="badge neutral" role="status"></span>
+          <div class="top-actions">
+            <button class="button quiet header-events" type="button" data-open-events aria-label="Notificações"><i class="fa-regular fa-bell" aria-hidden="true"></i><span class="counter" data-unread hidden></span></button>
+            <button id="logout" class="button quiet" type="button"><i class="fa-solid fa-arrow-right-from-bracket" aria-hidden="true"></i> Sair</button>
+          </div>
+        </header>
+        <div id="reconnect-banner" class="banner warning" role="status" hidden>Reconectando ao EMQX…</div>
+        <div id="simulation-banner" class="banner info" role="status" hidden>Simulador ativo. Comandos e leituras desta sessão são simulados.</div>
+        <div id="missed-banner" class="banner warning" hidden><span id="missed-summary"></span><button id="review-missed" class="button small" type="button">Revisar pendência</button></div>
+      </div>
+
+      <section id="view-dashboard" class="view" aria-labelledby="dashboard-title">
+        <div class="view-head">
+          <div><h1 id="dashboard-title" tabindex="-1">Dashboard</h1><p id="last-update">Aguardando a primeira leitura do equipamento.</p></div>
+          <div class="actions">
+            <button id="refresh" class="button" type="button"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Atualizar dados</button>
+            <button id="sync" class="button primary" type="button"><i class="fa-regular fa-clock" aria-hidden="true"></i> Sincronizar relógio (RTC)</button>
+          </div>
+        </div>
+        <div class="system-strip surface">
+          <div><span>Sistema</span><strong id="system-state" class="badge neutral">Aguardando status</strong></div>
+          <div><span>Relógio</span><strong id="rtc-state" class="badge neutral">Aguardando status</strong></div>
+          <div><span>Ponte</span><strong>ESP8266 · UART 9600</strong></div>
+          <div><span>Controlador</span><strong>Arduino Mega 2560</strong></div>
+        </div>
+        <h2>Reservatórios</h2>
+        <div id="reservoirs" class="card-grid"></div>
+        <h2>Ações manuais</h2>
+        <div class="card-grid">
+          <article class="surface operation">
+            <div class="card-heading"><span class="icon-box food"><i class="fa-solid fa-seedling" aria-hidden="true"></i></span><div><h3>Alimentação</h3><span id="feeding-state" class="badge neutral">Aguardando status</span></div></div>
+            <button id="feed" class="button accent" type="button">Alimentar agora</button>
+          </article>
+          <article class="surface operation">
+            <div class="card-heading"><span class="icon-box water"><i class="fa-solid fa-droplet" aria-hidden="true"></i></span><div><h3>Hidratação</h3><span id="watering-state" class="badge neutral">Aguardando status</span></div></div>
+            <button id="water" class="button primary" type="button">Repor água agora</button>
+          </article>
+        </div>
+        <h2>Manutenção</h2>
+        <article class="surface operation">
+          <div class="card-heading"><span class="icon-box"><i class="fa-solid fa-broom" aria-hidden="true"></i></span><div><h3>Higienização da gaiola</h3><span id="cleaning-state" class="badge neutral">Aguardando status</span></div></div>
+          <button id="cleaning" class="button primary" type="button">Confirmar limpeza realizada</button>
+        </article>
+      </section>
+
+      <section id="view-schedules" class="view" aria-labelledby="schedules-title" hidden>
+        <div class="view-head"><div><h1 id="schedules-title" tabindex="-1">Agendamentos</h1><p>Programe até quatro horários por módulo.</p></div></div>
+        <div id="schedule-panels" class="card-grid"></div>
+        <div class="section-actions">
+          <p id="schedule-status" role="status"></p>
+          <button id="discard-schedule" class="button" type="button" hidden>Descartar rascunho</button>
+          <button id="load-schedule" class="button" type="button">Consultar agenda</button>
+          <button id="save-schedule" class="button primary" type="button">Salvar alterações</button>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view" aria-labelledby="settings-title" hidden>
+        <div class="view-head"><div><h1 id="settings-title" tabindex="-1">Configurações</h1><p>Parâmetros operacionais e calibração dos reservatórios.</p></div></div>
+        <div id="config-panels" class="card-grid"></div>
+        <article class="surface formula">
+          <h2>Cálculo ultrassônico</h2>
+          <code>alturaConteudo = distanciaReferencia − distanciaMedida</code>
+          <code>percentualNivel = (alturaConteudo / alturaUtil) × 100</code>
+        </article>
+      </section>
+
+      <!-- === INÍCIO DO MÓDULO DE TESTES E SIMULAÇÃO (PODE SER REMOVIDO EM PRODUÇÃO) === -->
+      <section id="view-diagnostics" class="view" aria-labelledby="diagnostics-title" hidden>
+        <div class="view-head"><div><h1 id="diagnostics-title" tabindex="-1">Diagnóstico</h1><p id="system-info">Aguardando identificação do equipamento.</p></div></div>
+        <article class="surface panel">
+          <h2>Simulador do Arduino Mega</h2>
+          <label class="check switch"><input id="simulate" type="checkbox"> Ativar simulador de respostas do Arduino (para testes sem hardware)</label>
+          <div id="scenarios" class="scenario-grid">
+            <button class="button" type="button" data-scenario="normal">Telemetria normal · 76% / 62%</button>
+            <button class="button" type="button" data-scenario="invalid">Sensor ultrassônico inválido</button>
+            <button class="button" type="button" data-scenario="low">Evento de nível baixo</button>
+            <button class="button" type="button" data-scenario="cleaning">Alerta de limpeza · 48h</button>
+            <button class="button" type="button" data-scenario="missed">Refeição programada perdida</button>
+            <button class="button" type="button" data-scenario="pump">Falha na bomba d’água</button>
+          </div>
+        </article>
+        <article class="surface panel">
+          <div class="section-actions terminal-controls">
+            <h2>Tráfego JSON</h2>
+            <button id="clear-terminal" class="button small" type="button">Limpar console</button>
+            <button id="pause-terminal" class="button small" type="button" aria-pressed="false">Pausar scroll</button>
+          </div>
+          <div id="terminal" class="terminal" tabindex="0" aria-label="Console de tráfego MQTT"></div>
+          <form id="manual-form">
+            <label for="manual-json">Comando JSON manual</label>
+            <p class="muted">Informe <code>action</code> e <code>data</code>. O painel gera o envelope v1.0 e um identificador único.</p>
+            <textarea id="manual-json" rows="3" required spellcheck="false">{"action":"get_status","data":{}}</textarea>
+            <button id="send-manual" class="button primary" type="submit">Enviar comando JSON manual</button>
+          </form>
+        </article>
+      </section>
+      <!-- === FIM DO MÓDULO DE TESTES E SIMULAÇÃO === -->
+
+      <footer id="firmware-footer" class="workspace-footer"></footer>
+    </main>
+  </div>
+
+  <div id="toasts" class="toasts" aria-label="Avisos"></div>
+  <dialog id="action-dialog" aria-labelledby="action-title" aria-describedby="action-description">
+    <form method="dialog">
+      <h2 id="action-title"></h2><p id="action-description"></p>
+      <div class="actions dialog-actions"><button id="action-cancel" class="button" value="cancel" autofocus></button><button id="action-confirm" class="button primary" value="confirm"></button></div>
+    </form>
+  </dialog>
+  <dialog id="events-dialog" aria-labelledby="events-title">
+    <form method="dialog" class="section-actions"><h2 id="events-title">Notificações</h2><button class="button small" value="close">Fechar</button></form>
+    <ol id="event-history" class="event-history"></ol>
+  </dialog>
+</body>
+</html>
