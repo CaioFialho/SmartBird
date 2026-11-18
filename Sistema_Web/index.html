@@ -1,9 +1,12 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-type="software">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#1B4332">
+  <meta name="description" content="Painel SmartBird para acompanhar os reservatórios, operar a gaiola e programar as rotinas de alimentação e hidratação.">
+  <meta name="page-type" content="software">
+  <meta name="site-kind" content="software">
   <title>SmartBird | Painel da gaiola</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -22,15 +25,15 @@
 </head>
 <body>
   <main id="login" class="login">
+    <a class="skip-link" href="#login-form">Ir para o formulário de acesso</a>
     <div class="login-brand">
-      <div class="brand-emblem"><img src="Logo_SmartBird.jpg" alt="Logo SmartBird"></div>
+      <div class="brand-emblem"><img src="Logo_SmartBird_web.jpg" alt="" width="400" height="400"></div>
       <strong>SmartBird</strong>
       <p>Alimentação, hidratação e monitoramento para aves.</p>
     </div>
     <div class="login-content">
-      <form id="login-form" class="login-form">
+      <form id="login-form" class="login-form" tabindex="-1">
         <div class="login-intro">
-          <span class="icon-box"><i class="fa-solid fa-lock" aria-hidden="true"></i></span>
           <h1>Conectar à gaiola</h1>
           <p>Entre com as credenciais do broker EMQX para acessar o painel.</p>
         </div>
@@ -52,36 +55,38 @@
           </div>
         </details>
         <p id="login-error" class="error-text" role="alert" hidden></p>
-        <button id="connect" class="button primary full" type="submit">Conectar à gaiola <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+        <button id="connect" class="button primary full" type="submit"><span id="connect-label">Conectar à gaiola</span><i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
       </form>
     </div>
   </main>
 
   <div id="dashboard-app" hidden>
-    <aside class="sidebar">
-      <div class="sidebar-brand"><img src="Logo_SmartBird.jpg" alt="Logo SmartBird"><span>SmartBird</span></div>
-      <nav id="navigation" aria-label="Navegação principal">
-        <button class="nav-link" type="button" data-view="dashboard" aria-current="page"><i class="fa-solid fa-table-columns" aria-hidden="true"></i> Dashboard</button>
-        <button class="nav-link" type="button" data-view="schedules"><i class="fa-regular fa-calendar" aria-hidden="true"></i> Agendamentos</button>
-        <button class="nav-link" type="button" data-view="settings"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Configurações</button>
-        <button class="nav-link" type="button" data-view="diagnostics"><i class="fa-solid fa-terminal" aria-hidden="true"></i> Diagnóstico</button>
-      </nav>
-      <button class="sidebar-events" type="button" data-open-events><i class="fa-regular fa-bell" aria-hidden="true"></i> Notificações <span class="counter" data-unread hidden></span></button>
-      <p class="sidebar-device"><i class="fa-solid fa-microchip" aria-hidden="true"></i> <span id="sidebar-device"></span></p>
-    </aside>
+    <header class="app-header">
+      <div class="topbar wrap">
+        <a class="skip-link" href="#workspace">Ir para o conteúdo</a>
+        <div class="app-brand"><img src="Logo_SmartBird_web.jpg" alt="" width="38" height="38"><span>SmartBird</span></div>
+        <nav id="navigation" class="app-nav" aria-label="Navegação principal">
+          <button class="nav-link" type="button" data-view="dashboard" aria-current="page"><i class="fa-solid fa-table-columns" aria-hidden="true"></i><span>Dashboard</span></button>
+          <button class="nav-link" type="button" data-view="schedules"><i class="fa-regular fa-calendar" aria-hidden="true"></i><span>Agendamentos</span></button>
+          <button class="nav-link" type="button" data-view="settings"><i class="fa-solid fa-sliders" aria-hidden="true"></i><span>Configurações</span></button>
+          <button class="nav-link" type="button" data-view="diagnostics"><i class="fa-solid fa-terminal" aria-hidden="true"></i><span>Diagnóstico</span></button>
+        </nav>
+        <div class="top-actions">
+          <button class="icon-button header-events" type="button" data-open-events aria-label="Notificações" aria-haspopup="dialog"><i class="fa-regular fa-bell" aria-hidden="true"></i><span class="counter" data-unread aria-hidden="true" hidden></span></button>
+          <button id="logout" class="button quiet" type="button"><i class="fa-solid fa-arrow-right-from-bracket" aria-hidden="true"></i> Sair</button>
+        </div>
+      </div>
+    </header>
 
-    <main class="workspace">
-      <div class="sticky-top">
-        <header class="topbar">
-          <span id="connection-badge" class="badge neutral" role="status"></span>
-          <div class="top-actions">
-            <button class="button quiet header-events" type="button" data-open-events aria-label="Notificações"><i class="fa-regular fa-bell" aria-hidden="true"></i><span class="counter" data-unread hidden></span></button>
-            <button id="logout" class="button quiet" type="button"><i class="fa-solid fa-arrow-right-from-bracket" aria-hidden="true"></i> Sair</button>
-          </div>
-        </header>
-        <div id="reconnect-banner" class="banner warning" role="status" hidden>Reconectando ao EMQX…</div>
-        <div id="simulation-banner" class="banner info" role="status" hidden>Simulador ativo. Comandos e leituras desta sessão são simulados.</div>
-        <div id="missed-banner" class="banner warning" hidden><span id="missed-summary"></span><button id="review-missed" class="button small" type="button">Revisar pendência</button></div>
+    <main id="workspace" class="workspace wrap" tabindex="-1">
+      <div class="workspace-context">
+        <p class="device-label"><i class="fa-solid fa-microchip" aria-hidden="true"></i><span>Dispositivo <strong id="active-device"></strong></span></p>
+        <span id="connection-badge" class="badge neutral" role="status"></span>
+      </div>
+      <div class="workspace-alerts">
+        <div id="reconnect-banner" class="banner warning" role="status" hidden><i class="fa-solid fa-link-slash" aria-hidden="true"></i> Reconectando ao EMQX…</div>
+        <div id="simulation-banner" class="banner info" role="status" hidden><i class="fa-solid fa-flask" aria-hidden="true"></i> Simulador ativo. Comandos e leituras desta sessão são simulados.</div>
+        <div id="missed-banner" class="banner warning" hidden><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span id="missed-summary"></span><button id="review-missed" class="button small" type="button" aria-haspopup="dialog">Revisar pendência</button></div>
       </div>
 
       <section id="view-dashboard" class="view" aria-labelledby="dashboard-title">
@@ -89,7 +94,7 @@
           <div><h1 id="dashboard-title" tabindex="-1">Dashboard</h1><p id="last-update">Aguardando a primeira leitura do equipamento.</p></div>
           <div class="actions">
             <button id="refresh" class="button" type="button"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Atualizar dados</button>
-            <button id="sync" class="button primary" type="button"><i class="fa-regular fa-clock" aria-hidden="true"></i> Sincronizar relógio (RTC)</button>
+            <button id="sync" class="button primary" type="button">Sincronizar relógio (RTC)</button>
           </div>
         </div>
         <div class="system-strip surface">
@@ -98,30 +103,36 @@
           <div><span>Ponte</span><strong>ESP8266 · UART 9600</strong></div>
           <div><span>Controlador</span><strong>Arduino Mega 2560</strong></div>
         </div>
-        <h2>Reservatórios</h2>
-        <div id="reservoirs" class="card-grid"></div>
-        <h2>Ações manuais</h2>
-        <div class="card-grid">
+        <div class="view-group">
+          <h2 class="group-title">Reservatórios</h2>
+          <div id="reservoirs" class="card-grid"></div>
+        </div>
+        <div class="view-group">
+          <h2 class="group-title">Ações manuais</h2>
+          <div class="card-grid">
+            <article class="surface operation">
+              <div class="card-heading"><span class="icon-box food"><i class="fa-solid fa-seedling" aria-hidden="true"></i></span><div><h3>Alimentação</h3><span id="feeding-state" class="badge neutral">Aguardando status</span></div></div>
+              <button id="feed" class="button accent" type="button" aria-haspopup="dialog">Alimentar agora</button>
+            </article>
+            <article class="surface operation">
+              <div class="card-heading"><span class="icon-box water"><i class="fa-solid fa-droplet" aria-hidden="true"></i></span><div><h3>Hidratação</h3><span id="watering-state" class="badge neutral">Aguardando status</span></div></div>
+              <button id="water" class="button primary" type="button" aria-haspopup="dialog">Repor água agora</button>
+            </article>
+          </div>
+        </div>
+        <div class="view-group">
+          <h2 class="group-title">Manutenção</h2>
           <article class="surface operation">
-            <div class="card-heading"><span class="icon-box food"><i class="fa-solid fa-seedling" aria-hidden="true"></i></span><div><h3>Alimentação</h3><span id="feeding-state" class="badge neutral">Aguardando status</span></div></div>
-            <button id="feed" class="button accent" type="button">Alimentar agora</button>
-          </article>
-          <article class="surface operation">
-            <div class="card-heading"><span class="icon-box water"><i class="fa-solid fa-droplet" aria-hidden="true"></i></span><div><h3>Hidratação</h3><span id="watering-state" class="badge neutral">Aguardando status</span></div></div>
-            <button id="water" class="button primary" type="button">Repor água agora</button>
+            <div class="card-heading"><span class="icon-box"><i class="fa-solid fa-broom" aria-hidden="true"></i></span><div><h3>Higienização da gaiola</h3><span id="cleaning-state" class="badge neutral">Aguardando status</span></div></div>
+            <button id="cleaning" class="button primary" type="button">Confirmar limpeza realizada</button>
           </article>
         </div>
-        <h2>Manutenção</h2>
-        <article class="surface operation">
-          <div class="card-heading"><span class="icon-box"><i class="fa-solid fa-broom" aria-hidden="true"></i></span><div><h3>Higienização da gaiola</h3><span id="cleaning-state" class="badge neutral">Aguardando status</span></div></div>
-          <button id="cleaning" class="button primary" type="button">Confirmar limpeza realizada</button>
-        </article>
       </section>
 
       <section id="view-schedules" class="view" aria-labelledby="schedules-title" hidden>
         <div class="view-head"><div><h1 id="schedules-title" tabindex="-1">Agendamentos</h1><p>Programe até quatro horários por módulo.</p></div></div>
         <div id="schedule-panels" class="card-grid"></div>
-        <div class="section-actions">
+        <div class="section-actions schedule-actions">
           <p id="schedule-status" role="status"></p>
           <button id="discard-schedule" class="button" type="button" hidden>Descartar rascunho</button>
           <button id="load-schedule" class="button" type="button">Consultar agenda</button>
@@ -176,14 +187,25 @@
   </div>
 
   <div id="toasts" class="toasts" aria-label="Avisos"></div>
-  <dialog id="action-dialog" aria-labelledby="action-title" aria-describedby="action-description">
+  <dialog id="action-dialog" class="dialog action-dialog" aria-labelledby="action-title" aria-describedby="action-description">
     <form method="dialog">
-      <h2 id="action-title"></h2><p id="action-description"></p>
-      <div class="actions dialog-actions"><button id="action-cancel" class="button" value="cancel" autofocus></button><button id="action-confirm" class="button primary" value="confirm"></button></div>
+      <div class="dialog-content">
+        <span class="icon-box dialog-icon" aria-hidden="true"><i id="action-icon" class="fa-solid"></i></span>
+        <h2 id="action-title"></h2>
+        <p id="action-description"></p>
+      </div>
+      <div class="dialog-actions">
+        <button id="action-cancel" class="button" type="submit" value="cancel" autofocus></button>
+        <button id="action-confirm" class="button primary" type="submit" value="confirm"></button>
+      </div>
     </form>
   </dialog>
-  <dialog id="events-dialog" aria-labelledby="events-title">
-    <form method="dialog" class="section-actions"><h2 id="events-title">Notificações</h2><button class="button small" value="close">Fechar</button></form>
+  <dialog id="events-dialog" class="dialog events-dialog" aria-labelledby="events-title">
+    <form method="dialog" class="dialog-content events-heading">
+      <span class="icon-box dialog-icon" aria-hidden="true"><i class="fa-regular fa-bell"></i></span>
+      <h2 id="events-title">Notificações</h2>
+      <button class="button small" type="submit" value="close" autofocus>Fechar</button>
+    </form>
     <ol id="event-history" class="event-history"></ol>
   </dialog>
 </body>

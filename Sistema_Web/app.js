@@ -99,6 +99,8 @@
       this.callback = onClose;
       dialog.returnValue = '';
       dialog.dataset.kind = kind;
+      const icons = { feed_manual: 'seedling', water_manual: 'droplet', missed: 'clock-rotate-left' };
+      $('action-icon').className = 'fa-solid fa-' + icons[kind];
       $('action-title').textContent = title;
       $('action-description').textContent = description;
       $('action-confirm').textContent = confirm;
@@ -828,11 +830,12 @@
         const article = document.createElement('article');
         article.id = 'reservoir-' + key;
         article.className = 'surface reservoir';
-        article.innerHTML = '<div class="card-heading"><span class="icon-box ' + key + '">' +
-          '<i class="fa-solid fa-' + icon + '" aria-hidden="true"></i></span><div><h3>' + name + '</h3><span class="badge" role="status"></span></div></div>' +
+        article.innerHTML = '<div class="reservoir-details"><span class="icon-box ' + key + '">' +
+          '<i class="fa-solid fa-' + icon + '" aria-hidden="true"></i></span><div><h3>' + name + '</h3><span class="badge" role="status"></span></div>' +
+          '<p class="distance"></p></div>' +
           '<div class="gauge"><svg viewBox="0 0 120 120" aria-hidden="true">' +
           '<circle class="track" cx="60" cy="60" r="51"></circle><circle class="level" cx="60" cy="60" r="51" pathLength="100"></circle>' +
-          '</svg><strong></strong></div><p class="distance"></p>';
+          '</svg><strong></strong></div>';
         $('reservoirs').append(article);
       }
     },
@@ -858,7 +861,7 @@
       $('login').hidden = AppState.signedIn;
       $('dashboard-app').hidden = !AppState.signedIn;
       $('connect').disabled = AppState.connection === 'connecting';
-      $('connect').textContent = AppState.connection === 'connecting' ? 'Conectando ao EMQX…' : 'Conectar à gaiola';
+      $('connect-label').textContent = AppState.connection === 'connecting' ? 'Conectando ao EMQX…' : 'Conectar à gaiola';
       if (!AppState.signedIn) return;
       const simulated = Boolean(diagnostics.active?.());
       const { equipment, connection, settings, unread } = AppState;
@@ -868,7 +871,7 @@
         offline: ['Desconectado', 'danger', 'link-slash']
       };
       this.badge($('connection-badge'), ...connectionLabel[connection]);
-      $('sidebar-device').textContent = settings.deviceId;
+      $('active-device').textContent = settings.deviceId;
       $('reconnect-banner').hidden = connection !== 'reconnecting';
       $('simulation-banner').hidden = !simulated;
       $('missed-banner').hidden = !equipment.missed.length;
