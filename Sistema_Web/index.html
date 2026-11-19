@@ -8,6 +8,7 @@
   <meta name="page-type" content="software">
   <meta name="site-kind" content="software">
   <title>SmartBird | Painel da gaiola</title>
+  <link rel="icon" type="image/jpeg" href="Logo_SmartBird.jpg">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     if (window.tailwind) {
@@ -98,32 +99,52 @@
           </div>
         </div>
         <div class="system-strip surface">
-          <div><span>Sistema</span><strong id="system-state" class="badge neutral">Aguardando status</strong></div>
-          <div><span>Relógio</span><strong id="rtc-state" class="badge neutral">Aguardando status</strong></div>
+          <div><span>Sistema</span><strong id="system-state" class="badge neutral" role="status">Aguardando status</strong></div>
+          <div><span>Relógio</span><strong id="rtc-state" class="badge neutral" role="status">Aguardando status</strong></div>
           <div><span>Ponte</span><strong>ESP8266 · UART 9600</strong></div>
           <div><span>Controlador</span><strong>Arduino Mega 2560</strong></div>
         </div>
         <div class="view-group">
-          <h2 class="group-title">Reservatórios</h2>
+          <h2 class="group-title">Reservatórios de origem</h2>
           <div id="reservoirs" class="card-grid"></div>
+        </div>
+        <div class="view-group">
+          <h2 class="group-title">Recipientes de consumo</h2>
+          <div class="card-grid">
+            <article id="food-bowl" class="surface measurement container-reading" data-category="food">
+              <div class="reservoir-details">
+                <span class="icon-box"><i class="fa-solid fa-scale-balanced" aria-hidden="true"></i></span>
+                <div><h3>Pote de alimento</h3><span class="badge neutral" role="status">Aguardando leitura</span></div>
+              </div>
+              <strong class="reading-value">—</strong>
+            </article>
+            <article id="water-bowl" class="surface measurement container-reading" data-category="water">
+              <div class="reservoir-details">
+                <span class="icon-box"><i class="fa-solid fa-glass-water" aria-hidden="true"></i></span>
+                <div><h3>Bebedouro</h3><span class="badge neutral" role="status">Aguardando leitura</span></div>
+              </div>
+              <strong class="reading-value" aria-live="polite">—</strong>
+              <p class="distance">A boia pode indicar nível adequado se o cabo estiver desconectado.</p>
+            </article>
+          </div>
         </div>
         <div class="view-group">
           <h2 class="group-title">Ações manuais</h2>
           <div class="card-grid">
-            <article class="surface operation">
-              <div class="card-heading"><span class="icon-box food"><i class="fa-solid fa-seedling" aria-hidden="true"></i></span><div><h3>Alimentação</h3><span id="feeding-state" class="badge neutral">Aguardando status</span></div></div>
+            <article class="surface operation" data-category="food">
+              <div class="card-heading"><span class="icon-box"><i class="fa-solid fa-seedling" aria-hidden="true"></i></span><div><h3>Alimentação</h3><span id="feeding-state" class="badge neutral" role="status">Aguardando status</span></div></div>
               <button id="feed" class="button accent" type="button" aria-haspopup="dialog">Alimentar agora</button>
             </article>
-            <article class="surface operation">
-              <div class="card-heading"><span class="icon-box water"><i class="fa-solid fa-droplet" aria-hidden="true"></i></span><div><h3>Hidratação</h3><span id="watering-state" class="badge neutral">Aguardando status</span></div></div>
+            <article class="surface operation" data-category="water">
+              <div class="card-heading"><span class="icon-box"><i class="fa-solid fa-faucet-drip" aria-hidden="true"></i></span><div><h3>Hidratação</h3><span id="watering-state" class="badge neutral" role="status">Aguardando status</span><p id="pump-status" class="actuator-status muted"></p></div></div>
               <button id="water" class="button primary" type="button" aria-haspopup="dialog">Repor água agora</button>
             </article>
           </div>
         </div>
         <div class="view-group">
           <h2 class="group-title">Manutenção</h2>
-          <article class="surface operation">
-            <div class="card-heading"><span class="icon-box"><i class="fa-solid fa-broom" aria-hidden="true"></i></span><div><h3>Higienização da gaiola</h3><span id="cleaning-state" class="badge neutral">Aguardando status</span></div></div>
+          <article class="surface operation maintenance">
+            <div class="card-heading"><span class="icon-box"><i class="fa-solid fa-broom" aria-hidden="true"></i></span><div><h3>Higienização da gaiola</h3><span id="cleaning-state" class="badge neutral" role="status">Aguardando status</span></div></div>
             <button id="cleaning" class="button primary" type="button">Confirmar limpeza realizada</button>
           </article>
         </div>
@@ -133,7 +154,7 @@
         <div class="view-head"><div><h1 id="schedules-title" tabindex="-1">Agendamentos</h1><p>Programe até quatro horários por módulo.</p></div></div>
         <div id="schedule-panels" class="card-grid"></div>
         <div class="section-actions schedule-actions">
-          <p id="schedule-status" role="status"></p>
+          <p id="schedule-status" class="status-line neutral" role="status"></p>
           <button id="discard-schedule" class="button" type="button" hidden>Descartar rascunho</button>
           <button id="load-schedule" class="button" type="button">Consultar agenda</button>
           <button id="save-schedule" class="button primary" type="button">Salvar alterações</button>
@@ -141,10 +162,16 @@
       </section>
 
       <section id="view-settings" class="view" aria-labelledby="settings-title" hidden>
-        <div class="view-head"><div><h1 id="settings-title" tabindex="-1">Configurações</h1><p>Parâmetros operacionais e calibração dos reservatórios.</p></div></div>
-        <div id="config-panels" class="card-grid"></div>
-        <article class="surface formula">
-          <h2>Cálculo ultrassônico</h2>
+        <div class="view-head"><div><h1 id="settings-title" tabindex="-1">Configurações</h1><p>Parâmetros do equipamento e referência de calibração.</p></div></div>
+        <div id="config-panels" class="card-grid">
+          <article class="surface panel config-panel" data-category="water">
+            <h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-faucet-drip" aria-hidden="true"></i></span>Hidratação</h2>
+            <p>A boia indica nível baixo ou adequado no bebedouro. A disponibilidade de água para a bomba é verificada no reservatório de origem.</p>
+            <p class="muted">O firmware de hidratação define um limite de 15 segundos de bombeamento contínuo. A configuração de hidratação pela Web está pendente no protocolo.</p>
+          </article>
+        </div>
+        <article class="surface formula" data-category="technical">
+          <h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-ruler-vertical" aria-hidden="true"></i></span>Cálculo ultrassônico</h2>
           <code>alturaConteudo = distanciaReferencia − distanciaMedida</code>
           <code>percentualNivel = (alturaConteudo / alturaUtil) × 100</code>
         </article>
@@ -153,21 +180,24 @@
       <!-- === INÍCIO DO MÓDULO DE TESTES E SIMULAÇÃO (PODE SER REMOVIDO EM PRODUÇÃO) === -->
       <section id="view-diagnostics" class="view" aria-labelledby="diagnostics-title" hidden>
         <div class="view-head"><div><h1 id="diagnostics-title" tabindex="-1">Diagnóstico</h1><p id="system-info">Aguardando identificação do equipamento.</p></div></div>
-        <article class="surface panel">
-          <h2>Simulador do Arduino Mega</h2>
+        <article class="surface panel" data-category="technical">
+          <h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-flask" aria-hidden="true"></i></span>Simulador do Arduino Mega</h2>
           <label class="check switch"><input id="simulate" type="checkbox"> Ativar simulador de respostas do Arduino (para testes sem hardware)</label>
           <div id="scenarios" class="scenario-grid">
-            <button class="button" type="button" data-scenario="normal">Telemetria normal · 76% / 62%</button>
+            <button class="button" type="button" data-scenario="normal">Telemetria normal dos quatro sensores</button>
             <button class="button" type="button" data-scenario="invalid">Sensor ultrassônico inválido</button>
-            <button class="button" type="button" data-scenario="low">Evento de nível baixo</button>
+            <button class="button" type="button" data-scenario="low">Reservatório de ração com nível baixo</button>
+            <button class="button" type="button" data-scenario="source-water-low">Reservatório de água com nível baixo</button>
+            <button class="button" type="button" data-scenario="bowl-low">Bebedouro com nível baixo</button>
+            <button class="button" type="button" data-scenario="bowls-invalid">Leituras do pote e do bebedouro inválidas</button>
             <button class="button" type="button" data-scenario="cleaning">Alerta de limpeza · 48h</button>
             <button class="button" type="button" data-scenario="missed">Refeição programada perdida</button>
             <button class="button" type="button" data-scenario="pump">Falha na bomba d’água</button>
           </div>
         </article>
-        <article class="surface panel">
+        <article class="surface panel" data-category="technical">
           <div class="section-actions terminal-controls">
-            <h2>Tráfego JSON</h2>
+            <h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-terminal" aria-hidden="true"></i></span>Tráfego JSON</h2>
             <button id="clear-terminal" class="button small" type="button">Limpar console</button>
             <button id="pause-terminal" class="button small" type="button" aria-pressed="false">Pausar scroll</button>
           </div>
