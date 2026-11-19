@@ -12,25 +12,15 @@
     feeding: { label: 'Alimentação', action: 'feed_manual', button: 'feed', caption: 'Alimentar agora' },
     watering: { label: 'Hidratação', action: 'water_manual', button: 'water', caption: 'Repor água agora' }
   };
-  const sharedFields = [
-    ['reference_distance_cm', 'Distância de referência (cm)', 25],
-    ['useful_height_cm', 'Altura útil (cm)', 20]
-  ];
   const CONFIG_FIELDS = {
     feeding: [
       ['target_weight_g', 'Peso-alvo (g)', 20],
       ['max_duration_ms', 'Tempo máximo do servo (ms)', 5000, 'integer'],
-      ...sharedFields,
+      ['reference_distance_cm', 'Distância de referência (cm)', 25],
+      ['useful_height_cm', 'Altura útil (cm)', 20],
       ['low_threshold_percent', 'Limiar de nível baixo (%)', 20, 'percent'],
       ['full_threshold_percent', 'Limiar de nível cheio (%)', 95, 'percent'],
       ['cleaning_interval_hours', 'Intervalo de limpeza (h)', 48, 'integer']
-    ],
-    watering: [
-      ['target_level_percent', 'Nível-alvo (%)', 90, 'percent'],
-      ['max_duration_ms', 'Tempo máximo da bomba (ms)', 10000, 'integer'],
-      ...sharedFields,
-      ['low_threshold_percent', 'Limiar de nível baixo (%)', 25, 'percent'],
-      ['full_threshold_percent', 'Limiar de nível cheio (%)', 95, 'percent']
     ]
   };
   const ERROR_MESSAGES = {
@@ -42,8 +32,8 @@
     BUSY: 'O equipamento já está executando uma operação.',
     SAFETY_BLOCK: 'Acionamento bloqueado pelas condições de segurança do equipamento.',
     WEIGHT_SENSOR_FAILURE: 'Falha na verificação do sensor de alimentação.',
-    WATER_SENSOR_FAILURE: 'Falha na leitura de água. Bomba bloqueada por segurança.',
-    RESERVOIR_SENSOR_FAILURE: 'Falha na leitura do sensor do reservatório.',
+    WATER_SENSOR_FAILURE: 'Falha na verificação do bebedouro. Bomba bloqueada por segurança.',
+    RESERVOIR_SENSOR_FAILURE: 'Falha na leitura do sensor do reservatório de origem.',
     ACTUATOR_TIMEOUT: 'O atuador atingiu o tempo limite de segurança.',
     RTC_FAILURE: 'Falha de comunicação com o relógio RTC.',
     INTERNAL_ERROR: 'O equipamento informou uma falha interna.'
@@ -51,11 +41,12 @@
   const $ = (id) => document.getElementById(id);
   const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
   const isTime = (value) => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  const isPercent = (value) => Number.isFinite(value) && value >= 0 && value <= 100;
   const owns = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const copy = (value) => JSON.parse(JSON.stringify(value));
   const numberFormat = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
   const equipmentState = () => ({
-    status: {}, reservoirs: {}, cleaningDue: null, updatedAt: null, systemInfo: {},
+    status: {}, reservoirs: {}, containers: {}, pumpOn: null, cleaningDue: null, updatedAt: null, systemInfo: {},
     schedule: null, draft: null, draftBase: null, scheduleStale: false,
     confirmedConfig: {}, configDrafts: {}, missed: []
   });
@@ -66,6 +57,16 @@
   const pendingCommands = new Map();
   const diagnostics = {};
   const scheduleActions = ['get_schedule', 'set_schedule', 'remove_schedule'];
+  const STATUS_ICONS = {
+    neutral: 'circle-minus', success: 'circle-check', warning: 'triangle-exclamation',
+    danger: 'circle-exclamation', info: 'circle-info'
+  };
+  const makeIcon = (name, extraClass = '') => {
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-' + name + extraClass;
+    icon.setAttribute('aria-hidden', 'true');
+    return icon;
+  };
 
   // ToastService e ModalService
   const ToastService = {
@@ -73,10 +74,11 @@
       const toast = document.createElement('article');
       toast.className = 'toast ' + tone;
       toast.setAttribute('role', tone === 'danger' ? 'alert' : 'status');
-      toast.innerHTML = '<div><strong></strong><p></p></div><button class="icon-button" type="button" aria-label="Dispensar aviso">✕</button>';
-      toast.querySelector('strong').textContent = title;
+      toast.innerHTML = '<div><strong class="toast-title"></strong><p></p></div><button class="icon-button" type="button" aria-label="Dispensar aviso"></button>';
+      toast.querySelector('strong').append(makeIcon(STATUS_ICONS[tone], ' status-icon'), title);
       toast.querySelector('p').textContent = message;
       const close = toast.querySelector('button');
+      close.append(makeIcon('xmark'));
       close.addEventListener('click', () => toast.remove());
       if (shortcut) {
         const button = document.createElement('button');
@@ -207,6 +209,7 @@
         AppState.connection = 'reconnecting';
         if (!diagnostics.active?.()) {
           const equipment = AppState.equipment;
+          telemetry_handler.invalidateFreshness(equipment);
           equipment.scheduleStale = Boolean(equipment.schedule);
           equipment.status = {};
           command_service.cancelAll(true);
@@ -331,7 +334,10 @@
       let message;
       try { message = JSON.parse(payload); } catch { return; }
       if (message?.v !== '1.0' || message.source !== 'arduino') return;
-      if (message.type === 'telemetry') telemetry_handler.apply(message.data);
+      if (message.type === 'telemetry' && isRecord(message.data)) {
+        telemetry_handler.apply(message.data);
+        UIController.render();
+      }
       if (message.type === 'event') event_handler.receive(message);
       if (['ack', 'response', 'error'].includes(message.type)) this.resolve(message);
     },
@@ -386,6 +392,7 @@
       const equipment = AppState.equipment;
       switch (command.action) {
         case 'get_status':
+          telemetry_handler.apply(data);
           for (const key of ['system', 'feeding', 'watering', 'maintenance', 'rtc']) {
             if (typeof data[key] === 'string') equipment.status[key] = data[key];
           }
@@ -393,8 +400,7 @@
           if (data.maintenance === 'cleaning_due') equipment.cleaningDue = true;
           return true;
         case 'get_telemetry':
-          telemetry_handler.apply(data);
-          return true;
+          return telemetry_handler.apply(data);
         case 'get_schedule':
           return ScheduleManager.load(data);
         case 'set_schedule':
@@ -411,6 +417,10 @@
           const module = command.action === 'feed_manual' ? 'feeding' : 'watering';
           if (data.module !== module || data.result !== 'completed') return false;
           equipment.status[module] = 'completed';
+          if (module === 'watering') {
+            equipment.pumpOn = false;
+            telemetry_handler.updateKnownWaterBowlLevel('ok');
+          }
           return true;
         }
         case 'ack_cleaning':
@@ -418,9 +428,8 @@
           equipment.cleaningDue = false;
           return true;
         case 'set_feeding_config':
-        case 'set_watering_config':
           if (data.configuration_updated !== true) return false;
-          equipment.confirmedConfig[command.action === 'set_feeding_config' ? 'feeding' : 'watering'] = command.data;
+          equipment.confirmedConfig.feeding = command.data;
           return true;
         case 'sync_time':
           if (data.rtc_updated !== true) return false;
@@ -434,7 +443,7 @@
       const labels = {
         feed_manual: 'Ciclo de alimentação concluído.', water_manual: 'Ciclo de hidratação concluído.',
         set_schedule: 'Agendamentos salvos.', set_feeding_config: 'Configuração de alimentação gravada.',
-        set_watering_config: 'Configuração de hidratação gravada.', ack_cleaning: 'Lembrete de limpeza reiniciado.',
+        ack_cleaning: 'Lembrete de limpeza reiniciado.',
         sync_time: 'Relógio sincronizado.', get_status: 'Status atualizado.', get_telemetry: 'Leituras atualizadas.',
         get_schedule: 'Agendamentos consultados.', get_system_info: 'Identificação atualizada.',
         remove_schedule: 'Horário removido. Consulte a agenda para atualizar a lista.'
@@ -445,19 +454,57 @@
 
   // telemetry_handler
   const telemetry_handler = {
+    invalidateFreshness(equipment) {
+      for (const reading of [...Object.values(equipment.reservoirs), ...Object.values(equipment.containers)]) {
+        reading.stale = true;
+      }
+      equipment.pumpOn = null;
+    },
+    updateKnownWaterBowlLevel(level) {
+      const reading = AppState.equipment.containers.water_bowl;
+      if (reading?.valid && !reading.stale) {
+        reading.level_state = level;
+        reading.low = level === 'low';
+      }
+    },
     apply(data) {
-      if (!isRecord(data)) return;
       const equipment = AppState.equipment;
+      let receivedReading = false;
       for (const name of ['food', 'water']) {
-        const reading = data.reservoirs?.[name];
-        if (isRecord(reading)) equipment.reservoirs[name] = reading;
+        if (!isRecord(data.reservoirs) || !owns(data.reservoirs, name)) continue;
+        const reading = data.reservoirs[name];
+        equipment.reservoirs[name] = reading?.valid === true && isPercent(reading.level_percent) ? {
+          valid: true,
+          level_percent: reading.level_percent,
+          low: typeof reading.low === 'boolean' ? reading.low : undefined,
+          distance_cm: Number.isFinite(reading.distance_cm) && reading.distance_cm > 0 ? reading.distance_cm : undefined
+        } : { valid: false };
+        receivedReading = true;
+      }
+      for (const name of ['food_bowl', 'water_bowl']) {
+        if (!isRecord(data.containers) || !owns(data.containers, name)) continue;
+        const reading = data.containers[name];
+        let measurement = { valid: false };
+        if (reading?.valid === true) {
+          if (name === 'food_bowl' && Number.isFinite(reading.weight_g)) {
+            measurement = { valid: true, weight_g: reading.weight_g };
+          }
+          if (name === 'water_bowl' && ['low', 'ok'].includes(reading.level_state)) {
+            measurement = { valid: true, level_state: reading.level_state, low: reading.level_state === 'low' };
+          }
+        }
+        equipment.containers[name] = measurement;
+        receivedReading = true;
+      }
+      if (isRecord(data.watering)) {
+        equipment.pumpOn = typeof data.watering.pump_on === 'boolean' ? data.watering.pump_on : null;
       }
       for (const module of Object.keys(MODULES)) {
         if (typeof data[module]?.state === 'string') equipment.status[module] = data[module].state;
       }
       if (typeof data.maintenance?.cleaning_due === 'boolean') equipment.cleaningDue = data.maintenance.cleaning_due;
-      equipment.updatedAt = new Date();
-      UIController.render();
+      if (receivedReading) equipment.updatedAt = new Date();
+      return receivedReading;
     }
   };
 
@@ -481,19 +528,25 @@
         case 'feeding_completed':
         case 'watering_completed': {
           const module = data.name === 'feeding_completed' ? 'feeding' : 'watering';
-          const origin = { scheduled: 'programada', manual: 'manual' };
+          if (module === 'watering') {
+            if ((owns(data, 'container') && data.container !== 'water_bowl') ||
+                (owns(data, 'level_state') && data.level_state !== 'ok')) return;
+            equipment.pumpOn = false;
+            if (data.level_state === 'ok') telemetry_handler.updateKnownWaterBowlLevel('ok');
+          }
+          const origin = { scheduled: 'programada', manual: 'manual', automatic: 'automática' };
           equipment.status[module] = 'completed';
           text = MODULES[module].label + (owns(origin, data.origin) ? ' ' + origin[data.origin] : '') + ' concluída.';
           break;
         }
         case 'reservoir_low': {
           if (!['food', 'water'].includes(data.reservoir)) return;
-          const name = data.reservoir === 'food' ? 'Ração' : 'Água';
-          const level = Number.isFinite(data.level_percent) ? ' (' + numberFormat.format(data.level_percent) + '%)' : '';
+          const name = data.reservoir === 'food' ? 'Reservatório de ração' : 'Reservatório de água';
+          const level = isPercent(data.level_percent) ? ' (' + numberFormat.format(data.level_percent) + '%)' : '';
           const reading = equipment.reservoirs[data.reservoir];
-          if (reading?.valid === true) {
+          if (reading?.valid === true && !reading.stale) {
             reading.low = true;
-            if (data.level_percent >= 0 && data.level_percent <= 100 && Number.isFinite(data.level_percent)) {
+            if (isPercent(data.level_percent)) {
               reading.level_percent = data.level_percent;
               delete reading.distance_cm;
             }
@@ -502,6 +555,12 @@
           tone = 'warning';
           break;
         }
+        case 'container_level_low':
+          if (data.container !== 'water_bowl' || data.level_state !== 'low') return;
+          telemetry_handler.updateKnownWaterBowlLevel('low');
+          text = 'A boia do bebedouro indicou nível baixo.';
+          tone = 'warning';
+          break;
         case 'cleaning_due':
           equipment.cleaningDue = true;
           text = 'Limpeza necessária. Higienize a gaiola e confirme no painel.';
@@ -558,10 +617,13 @@
       }
       for (const entry of AppState.history) {
         const item = document.createElement('li');
+        item.className = 'event-entry ' + entry.tone;
+        const content = document.createElement('div');
         const time = document.createElement('time');
         time.dateTime = entry.date.toISOString();
         time.textContent = entry.date.toLocaleString('pt-BR');
-        item.append(time, entry.text);
+        content.append(time, entry.text);
+        item.append(makeIcon(STATUS_ICONS[entry.tone], ' status-icon'), content);
         list.append(item);
       }
     }
@@ -615,10 +677,12 @@
       $('load-schedule').disabled = !command_service.available() || loading || locked;
       $('discard-schedule').hidden = !this.dirty();
       $('discard-schedule').disabled = locked;
-      $('schedule-status').textContent = locked ? UIController.phase(command_service.pending('set_schedule') || command_service.pending('remove_schedule')) :
-        conflict ? 'A agenda do equipamento mudou. Descarte o rascunho para editar a versão atual.' :
-        loading ? 'Consultando agenda…' : scheduleStale ? 'Consulte a agenda antes de salvar.' :
-        this.dirty() ? 'Alterações aguardando envio.' : draft ? 'Agenda confirmada pelo equipamento.' : 'Aguardando a agenda do equipamento.';
+      const status = locked ? [UIController.phase(command_service.pending('set_schedule') || command_service.pending('remove_schedule')), 'info'] :
+        conflict ? ['A agenda do equipamento mudou. Descarte o rascunho para editar a versão atual.', 'warning'] :
+        loading ? ['Consultando agenda…', 'info'] : scheduleStale ? ['Consulte a agenda antes de salvar.', 'warning'] :
+        this.dirty() ? ['Alterações aguardando envio.', 'warning'] : draft ? ['Agenda confirmada pelo equipamento.', 'success'] :
+        ['Aguardando a agenda do equipamento.', 'neutral'];
+      UIController.setStatus($('schedule-status'), ...status);
       const signature = JSON.stringify([draft, locked]);
       if (signature === this.lastRender) return;
       this.lastRender = signature;
@@ -628,11 +692,12 @@
       for (const [index, [module, info]] of Object.entries(MODULES).entries()) {
         const card = document.createElement('article');
         const schedule = draft?.[module];
-        card.className = 'surface panel';
-        card.innerHTML = '<h2></h2><label class="check switch"><input type="checkbox"> Rotina automática</label>' +
+        card.className = 'surface panel schedule-panel';
+        card.dataset.category = module === 'feeding' ? 'food' : 'water';
+        card.innerHTML = '<h2 class="panel-title"><span class="icon-box"><i class="fa-regular fa-calendar" aria-hidden="true"></i></span></h2><label class="check switch"><input type="checkbox"> Rotina automática</label>' +
           '<p class="muted schedule-count"></p><ul class="time-list"></ul>' +
           '<form class="time-edit"><label>Novo horário <input type="time" required></label><button class="button" type="submit">Adicionar horário</button></form>';
-        card.querySelector('h2').textContent = 'Agenda de ' + info.label.toLowerCase();
+        card.querySelector('h2').append('Agenda de ' + info.label.toLowerCase());
         const toggle = card.querySelector('input[type="checkbox"]');
         const time = card.querySelector('input[type="time"]');
         const list = card.querySelector('ul');
@@ -712,11 +777,12 @@
       for (const [module, fields] of Object.entries(CONFIG_FIELDS)) {
         const form = document.createElement('form');
         form.id = 'config-' + module;
-        form.className = 'surface panel';
+        form.className = 'surface panel config-panel';
+        form.dataset.category = 'food';
         form.noValidate = true;
-        form.innerHTML = '<h2></h2><p class="muted config-status" role="status"></p><div class="field-grid"></div>' +
+        form.innerHTML = '<h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-sliders" aria-hidden="true"></i></span></h2><p class="status-line config-status neutral" role="status"></p><div class="field-grid"></div>' +
           '<p class="error-text config-errors" role="status" hidden></p><button class="button primary" type="submit">Salvar configuração</button>';
-        form.querySelector('h2').textContent = MODULES[module].label;
+        form.querySelector('h2').append(MODULES[module].label);
         for (const [key, caption, initial, type] of fields) {
           const label = document.createElement('label');
           const input = document.createElement('input');
@@ -741,7 +807,7 @@
           const values = this.read(form, module);
           if (!Object.keys(this.validate(module, values)).length) command_service.send('set_' + module + '_config', values);
         });
-        $('config-panels').append(form);
+        $('config-panels').prepend(form);
       }
     },
     read(form, module) {
@@ -769,9 +835,10 @@
         errorText.textContent = Object.values(errors).join(' ');
         errorText.hidden = !errorText.textContent;
         const status = form.querySelector('.config-status');
-        status.textContent = pending ? UIController.phase(pending) : same ? 'Configuração confirmada pelo equipamento.' :
-          confirmed ? 'Alterações ainda não confirmadas.' :
-          'Valores de referência. O protocolo não consulta a configuração atual do Arduino.';
+        const message = pending ? [UIController.phase(pending), 'info'] : same ? ['Configuração confirmada pelo equipamento.', 'success'] :
+          confirmed ? ['Alterações ainda não confirmadas.', 'warning'] :
+          ['Valores de referência. O protocolo não consulta a configuração atual do Arduino.', 'neutral'];
+        UIController.setStatus(status, ...message);
         form.querySelector('button').disabled = !command_service.available() || Boolean(pending) || !errorText.hidden;
       }
       this.equipment = equipment;
@@ -785,8 +852,8 @@
     alert: ['Atenção necessária', 'warning', 'triangle-exclamation'],
     error: ['Falha', 'danger', 'circle-exclamation'],
     idle: ['Em espera', 'neutral', 'circle-pause'],
-    checking: ['Verificando sensores', 'warning pulse', 'magnifying-glass'],
-    running: ['Em operação física', 'warning', 'spinner fa-spin'],
+    checking: ['Verificando sensores', 'warning', 'magnifying-glass'],
+    running: ['Em operação física', 'warning', 'hourglass-half'],
     completed: ['Ciclo concluído', 'success', 'circle-check'],
     available: ['RTC sincronizado', 'success', 'clock'],
     invalid: ['Horário não validado · sincronize o RTC', 'warning', 'clock'],
@@ -812,25 +879,21 @@
         window.scrollTo(0, 0);
       }
     },
-    badge(element, text, tone, icon) {
+    setStatus(element, text, tone, icon = STATUS_ICONS[tone]) {
       const signature = [text, tone, icon].join('|');
       if (element.dataset.badge === signature) return;
       element.dataset.badge = signature;
-      element.className = 'badge ' + tone;
-      element.textContent = text;
-      if (icon) {
-        const glyph = document.createElement('i');
-        glyph.className = 'fa-solid fa-' + icon;
-        glyph.setAttribute('aria-hidden', 'true');
-        element.prepend(glyph);
-      }
+      element.classList.remove(...Object.keys(STATUS_ICONS));
+      element.classList.add(tone);
+      element.replaceChildren(makeIcon(icon, ' status-icon'), text);
     },
     mountReservoirs() {
-      for (const [key, name, icon] of [['food', 'Reservatório de ração', 'seedling'], ['water', 'Reservatório de água', 'droplet']]) {
+      for (const [key, name, icon] of [['food', 'Reservatório de ração', 'box-archive'], ['water', 'Reservatório de água', 'water']]) {
         const article = document.createElement('article');
         article.id = 'reservoir-' + key;
-        article.className = 'surface reservoir';
-        article.innerHTML = '<div class="reservoir-details"><span class="icon-box ' + key + '">' +
+        article.className = 'surface measurement reservoir';
+        article.dataset.category = key;
+        article.innerHTML = '<div class="reservoir-details"><span class="icon-box">' +
           '<i class="fa-solid fa-' + icon + '" aria-hidden="true"></i></span><div><h3>' + name + '</h3><span class="badge" role="status"></span></div>' +
           '<p class="distance"></p></div>' +
           '<div class="gauge"><svg viewBox="0 0 120 120" aria-hidden="true">' +
@@ -841,21 +904,42 @@
     },
     reservoir(key, reading) {
       const article = $('reservoir-' + key);
-      const level = reading?.level_percent;
-      const valid = reading?.valid === true && Number.isFinite(level) && level >= 0 && level <= 100;
-      const low = valid && (reading.low === true || level < 20);
-      const tone = valid ? (low ? 'warning' : 'success') : reading ? 'danger' : 'neutral';
-      const text = valid ? (low ? 'Nível baixo · Reabastecer' : 'Nível normal') :
-        reading ? 'Leitura inválida / Sensor sem retorno' : 'Aguardando leitura';
-      article.dataset.tone = tone;
-      this.badge(article.querySelector('.badge'), text, tone);
+      const valid = reading?.valid === true;
+      const level = valid ? reading.level_percent : 0;
+      const text = reading?.low === true ? 'Nível baixo · Reabastecer' :
+        reading?.low === false ? 'Nível normal' : 'Leitura válida';
+      this.readingBadge(article, reading, text, reading?.low === true ? 'warning' : 'success');
       const arc = article.querySelector('.level');
       arc.hidden = !valid || level === 0;
       arc.setAttribute('visibility', valid && level > 0 ? 'visible' : 'hidden');
-      arc.setAttribute('stroke-dasharray', (valid ? level : 0) + ' 100');
+      arc.setAttribute('stroke-dasharray', level + ' 100');
       article.querySelector('.gauge strong').textContent = valid ? numberFormat.format(level) + '%' : '—';
-      article.querySelector('.distance').textContent = valid && Number.isFinite(reading.distance_cm) ?
+      article.querySelector('.distance').textContent = valid && reading.distance_cm !== undefined ?
         'Distância medida · ' + numberFormat.format(reading.distance_cm) + ' cm' : 'Distância indisponível';
+    },
+    readingBadge(article, reading, text, tone) {
+      if (!reading) {
+        text = AppState.equipment.updatedAt ? 'Leitura indisponível' : 'Aguardando leitura';
+        tone = 'neutral';
+      } else if (reading.stale) {
+        text = 'Leitura desatualizada';
+        tone = 'warning';
+      } else if (!reading.valid) {
+        text = 'Leitura inválida';
+        tone = 'danger';
+      }
+      this.setStatus(article.querySelector('.badge'), text, tone);
+    },
+    renderContainers({ food_bowl: food, water_bowl: water }) {
+      const foodCard = $('food-bowl');
+      const waterCard = $('water-bowl');
+      const low = water?.level_state === 'low';
+      this.readingBadge(foodCard, food, 'Leitura válida', 'success');
+      this.readingBadge(waterCard, water, 'Leitura da boia', low ? 'warning' : 'success');
+      foodCard.querySelector('.reading-value').textContent = food?.valid ? numberFormat.format(food.weight_g) + ' g' : '—';
+      const waterValue = waterCard.querySelector('.reading-value');
+      const level = water?.valid ? (low ? 'Baixo' : 'Adequado') : '—';
+      if (waterValue.textContent !== level) waterValue.textContent = level;
     },
     render() {
       $('login').hidden = AppState.signedIn;
@@ -867,10 +951,10 @@
       const { equipment, connection, settings, unread } = AppState;
       const connectionLabel = {
         online: ['Conectado ao EMQX', 'success', 'link'],
-        reconnecting: ['Reconectando…', 'warning', 'spinner fa-spin'],
+        reconnecting: ['Reconectando…', 'warning', 'hourglass-half'],
         offline: ['Desconectado', 'danger', 'link-slash']
       };
-      this.badge($('connection-badge'), ...connectionLabel[connection]);
+      this.setStatus($('connection-badge'), ...connectionLabel[connection]);
       $('active-device').textContent = settings.deviceId;
       $('reconnect-banner').hidden = connection !== 'reconnecting';
       $('simulation-banner').hidden = !simulated;
@@ -888,18 +972,22 @@
       }
       for (const key of ['system', 'rtc', 'feeding', 'watering']) {
         const state = equipment.status[key];
-        this.badge($(key + '-state'), ...(owns(STATUS_LABELS, state) ? STATUS_LABELS[state] : ['Aguardando status', 'neutral']));
+        this.setStatus($(key + '-state'), ...(owns(STATUS_LABELS, state) ? STATUS_LABELS[state] : ['Aguardando status', 'neutral']));
       }
       const cleaning = equipment.cleaningDue;
       const interval = equipment.confirmedConfig.feeding?.cleaning_interval_hours;
       const cleaningText = cleaning === true ? (interval == null ? 'Limpeza necessária · Prazo atingido' : 'Limpeza necessária · Prazo de ' + interval + ' h atingido') :
         cleaning === false ? 'Higienização em dia' : 'Aguardando status';
-      this.badge($('cleaning-state'), cleaningText, cleaning === true ? 'warning' : cleaning === false ? 'success' : 'neutral');
+      this.setStatus($('cleaning-state'), cleaningText, cleaning === true ? 'warning' : cleaning === false ? 'success' : 'neutral');
       this.reservoir('food', equipment.reservoirs.food);
       this.reservoir('water', equipment.reservoirs.water);
+      this.renderContainers(equipment.containers);
+      $('pump-status').textContent = equipment.pumpOn === null ? 'Comando da bomba indisponível' :
+        equipment.pumpOn ? 'Comando da bomba ativo' : 'Comando da bomba inativo';
       const lastUpdate = equipment.updatedAt;
+      const stale = [...Object.values(equipment.reservoirs), ...Object.values(equipment.containers)].some((reading) => reading.stale);
       $('last-update').textContent = lastUpdate ?
-        'Última atualização recebida às ' + lastUpdate.toLocaleTimeString('pt-BR') + (connection === 'reconnecting' && !simulated ? ' · Leitura anterior à desconexão' : '') :
+        'Última atualização recebida às ' + lastUpdate.toLocaleTimeString('pt-BR') + (stale ? ' · Há leituras desatualizadas' : '') :
         'Aguardando a primeira leitura do equipamento.';
       const info = equipment.systemInfo;
       const firmware = typeof info.firmware_version === 'string' ? info.firmware_version : '—';
@@ -934,15 +1022,10 @@
         $('action-confirm').disabled = !action || !command_service.canActuate(action);
       }
     },
-    buttonText(button, text, spinner) {
-      if (button.textContent === text && Boolean(button.querySelector('i')) === Boolean(spinner)) return;
+    buttonText(button, text, busy) {
+      if (button.textContent === text && Boolean(button.querySelector('i')) === Boolean(busy)) return;
       button.textContent = text;
-      if (spinner) {
-        const icon = document.createElement('i');
-        icon.className = 'fa-solid fa-spinner fa-spin';
-        icon.setAttribute('aria-hidden', 'true');
-        button.prepend(icon);
-      }
+      if (busy) button.prepend(makeIcon('hourglass-half'));
     },
     refresh() {
       if (!command_service.available()) return false;
@@ -1147,6 +1230,7 @@
         AppState.equipment = this.realEquipment;
         this.realEquipment = null;
         this.pumpFailure = false;
+        telemetry_handler.invalidateFreshness(AppState.equipment);
         AppState.equipment.scheduleStale = Boolean(AppState.equipment.schedule);
         AppState.equipment.status = {};
       }
@@ -1167,27 +1251,65 @@
     },
     telemetry() {
       const equipment = AppState.equipment;
+      const foodBowl = equipment.containers.food_bowl || { weight_g: 34.5, valid: true };
+      const waterBowl = equipment.containers.water_bowl || { level_state: 'ok', low: false, valid: true };
       return {
         reservoirs: {
           food: equipment.reservoirs.food || { level_percent: 76, distance_cm: 12.4, valid: true, low: false },
           water: equipment.reservoirs.water || { level_percent: 62, distance_cm: 15.1, valid: true, low: false }
         },
-        feeding: { state: equipment.status.feeding || 'idle' },
-        watering: { state: equipment.status.watering || 'idle' },
+        containers: { food_bowl: foodBowl, water_bowl: waterBowl },
+        feeding: { state: equipment.status.feeding || 'idle', bowl_weight_g: foodBowl.weight_g },
+        watering: { state: equipment.status.watering || 'idle', bowl_level: waterBowl.level_state, pump_on: equipment.pumpOn ?? false },
         maintenance: { cleaning_due: Boolean(equipment.cleaningDue) }
       };
     },
     pumpError() {
       return { code: 'WATER_SENSOR_FAILURE', message: 'Water level could not be verified safely' };
     },
+    wateringError(telemetry, starting) {
+      const bowl = telemetry.containers.water_bowl;
+      const reservoir = telemetry.reservoirs.water;
+      if (!bowl.valid) return this.pumpError();
+      if (!reservoir.valid) return { code: 'RESERVOIR_SENSOR_FAILURE', message: 'Source water reservoir reading is invalid' };
+      if (reservoir.low !== false) return { code: 'SAFETY_BLOCK', message: 'Source water reservoir availability is not confirmed' };
+      if (starting && bowl.level_state !== 'low') return { code: 'SAFETY_BLOCK', message: 'Water bowl level is already adequate' };
+      return null;
+    },
     send(command) {
-      this.after(400, () => this.emit('ack', { id: command.id, status: 'accepted' }));
+      const watering = command.action === 'water_manual';
+      this.after(400, () => {
+        if (!pendingCommands.has(command.id)) return;
+        const telemetry = watering ? this.telemetry() : null;
+        const error = watering && this.wateringError(telemetry, true);
+        if (error) {
+          this.emit('ack', { id: command.id, status: 'rejected', error });
+          return;
+        }
+        this.emit('ack', { id: command.id, status: 'accepted' });
+        if (watering && !this.pumpFailure) {
+          telemetry.watering.state = 'running';
+          telemetry.watering.pump_on = true;
+          this.emit('telemetry', { data: telemetry });
+        }
+      });
       this.after(2000, () => {
         if (!pendingCommands.has(command.id)) return;
-        if (command.action === 'water_manual' && this.pumpFailure) {
+        if (watering) {
+          const telemetry = this.telemetry();
+          const error = this.pumpFailure ? this.pumpError() : this.wateringError(telemetry, false);
           this.pumpFailure = false;
-          this.emit('response', { id: command.id, status: 'failure', error: this.pumpError() });
-          return;
+          telemetry.watering.pump_on = false;
+          telemetry.watering.state = error ? 'error' : 'completed';
+          if (!error) {
+            telemetry.containers.water_bowl = { level_state: 'ok', low: false, valid: true };
+            telemetry.watering.bowl_level = 'ok';
+          }
+          this.emit('telemetry', { data: telemetry });
+          if (error) {
+            this.emit('response', { id: command.id, status: 'failure', error });
+            return;
+          }
         }
         const data = this.result(command);
         this.emit('response', { id: command.id, status: 'success', data });
@@ -1197,8 +1319,10 @@
       switch (action) {
         case 'get_status': {
           const { status, cleaningDue } = AppState.equipment;
+          const { reservoirs, containers } = this.telemetry();
           return {
             system: 'operational', feeding: status.feeding || 'idle', watering: status.watering || 'idle',
+            reservoirs, containers,
             maintenance: cleaningDue ? 'cleaning_due' : 'normal', rtc: status.rtc || 'available'
           };
         }
@@ -1215,8 +1339,7 @@
         case 'remove_schedule':
           this.schedule[data.module].times = this.schedule[data.module].times.filter((time) => time !== data.time);
           return { ...data, removed: true };
-        case 'set_feeding_config':
-        case 'set_watering_config': return { configuration_updated: true };
+        case 'set_feeding_config': return { configuration_updated: true };
         case 'sync_time': return { rtc_updated: true, datetime: data.datetime };
       }
     },
@@ -1230,6 +1353,13 @@
             food: { level_percent: 76, distance_cm: 12.4, valid: true, low: false },
             water: { level_percent: 62, distance_cm: 15.1, valid: true, low: false }
           };
+          telemetry.containers = {
+            food_bowl: { weight_g: 34.5, valid: true },
+            water_bowl: { level_state: 'ok', low: false, valid: true }
+          };
+          telemetry.feeding = { state: 'idle', bowl_weight_g: 34.5 };
+          telemetry.watering = { state: 'idle', bowl_level: 'ok', pump_on: false };
+          this.pumpFailure = false;
           this.emit('telemetry', { timestamp, data: telemetry });
           break;
         case 'invalid':
@@ -1237,9 +1367,28 @@
           this.emit('telemetry', { timestamp, data: telemetry });
           break;
         case 'low':
-          telemetry.reservoirs.food = { level_percent: 15, valid: true, low: true };
+        case 'source-water-low': {
+          const reservoir = name === 'low' ? 'food' : 'water';
+          const alreadyLow = telemetry.reservoirs[reservoir].low === true;
+          telemetry.reservoirs[reservoir] = { level_percent: 15, valid: true, low: true };
           this.emit('telemetry', { timestamp, data: telemetry });
-          this.emit('event', { timestamp, data: { name: 'reservoir_low', reservoir: 'food', level_percent: 15 } });
+          if (!alreadyLow) this.emit('event', { timestamp, data: { name: 'reservoir_low', reservoir, level_percent: 15 } });
+          break;
+        }
+        case 'bowl-low': {
+          const alreadyLow = telemetry.containers.water_bowl.level_state === 'low';
+          telemetry.containers.water_bowl = { level_state: 'low', low: true, valid: true };
+          telemetry.watering.bowl_level = 'low';
+          this.emit('telemetry', { timestamp, data: telemetry });
+          if (!alreadyLow) this.emit('event', { timestamp, data: { name: 'container_level_low', container: 'water_bowl', level_state: 'low' } });
+          break;
+        }
+        case 'bowls-invalid':
+          telemetry.containers = { food_bowl: { valid: false }, water_bowl: { valid: false } };
+          delete telemetry.feeding.bowl_weight_g;
+          delete telemetry.watering.bowl_level;
+          telemetry.watering.pump_on = false;
+          this.emit('telemetry', { timestamp, data: telemetry });
           break;
         case 'cleaning':
           this.emit('event', { timestamp, data: { name: 'cleaning_due' } });
@@ -1251,7 +1400,8 @@
           break;
         case 'pump':
           this.pumpFailure = true;
-          telemetry.watering.state = 'error';
+          telemetry.containers.water_bowl = { level_state: 'low', low: true, valid: true };
+          telemetry.watering = { state: 'error', bowl_level: 'low', pump_on: false };
           this.emit('telemetry', { timestamp, data: telemetry });
           this.emit('error', { error: this.pumpError() });
           break;
@@ -1273,6 +1423,10 @@
       return;
     }
     const { action, data } = input;
+    if (action === 'set_watering_config') {
+      ToastService.show('Configuração indisponível', 'A configuração de hidratação pela Web está pendente no protocolo.', 'warning');
+      return;
+    }
     const emptyActions = ['get_status', 'get_telemetry', 'get_schedule', 'get_system_info', 'feed_manual', 'water_manual', 'ack_cleaning'];
     let payload = null;
     if (emptyActions.includes(action) && !Object.keys(data).length) payload = data;
