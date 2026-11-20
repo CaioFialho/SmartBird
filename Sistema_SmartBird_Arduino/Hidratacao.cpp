@@ -1,5 +1,6 @@
 #include "Hidratacao.h"
 #include "Hardware_SB.h"
+#include "Reservatorios.h"
 
 // ==========================================
 // CONFIGURAÇÕES
@@ -42,6 +43,29 @@ bool inicializarHidratacao() {
     hidratacaoEmAndamento = false;
     falhaPorTempo = false;
 
+    return true;
+}
+
+
+// ==========================================
+// INICIAR HIDRATAÇÃO MANUAL
+// ==========================================
+
+bool iniciarHidratacao(DadosSistema& dados) {
+    if (hidratacaoEmAndamento || falhaPorTempo) return false;
+
+    // A boia precisa confirmar nível baixo antes de ligar a bomba.
+    if (digitalRead(SENSOR_BOIA_AGUA) != LOW) return false;
+
+    // O reservatório de origem precisa ter leitura válida e água disponível.
+    if (!dados.reservatorioAgua.dados.leituraValida ||
+        dados.reservatorioAgua.dados.nivelBaixo) return false;
+
+    inicioHidratacaoMs = millis();
+    hidratacaoEmAndamento = true;
+    ligarBomba();
+    dados.hidratacao.bombaLigada = true;
+    dados.hidratacao.estado = EstadoHidratacao::ABASTECENDO;
     return true;
 }
 

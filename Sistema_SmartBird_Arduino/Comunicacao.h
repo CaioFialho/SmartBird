@@ -3,21 +3,27 @@
 
 #include <Arduino.h>
 
-// Limite definido no protocolo: 1024 bytes.
+// Seleção da comunicação:
+//
+// 0 = Serial1 (ESP8266, 9600 baud)
+// 1 = Serial USB (Monitor Serial, 115200 baud)
+
+#define SMARTBIRD_COMUNICACAO_USB 1
+
+// Limite máximo de uma mensagem.
 constexpr size_t MAX_BYTES_MENSAGEM = 1024;
 constexpr size_t TAMANHO_BUFFER_MENSAGEM = MAX_BYTES_MENSAGEM + 1;
 
-// Inicializa a UART entre Mega e ESP8266.
+// Inicializa a comunicação.
 void inicializarComunicacao();
 
-// Verifica se chegou uma mensagem completa.
-// Retorna true quando uma linha completa estiver disponível.
+// Recebe uma mensagem completa terminada em \n.
 bool receberMensagem(char* destino, size_t capacidade);
 
 // Envia uma mensagem terminada em \n.
 bool enviarMensagem(const char* mensagem);
 
-// Informa se ocorreu estouro do buffer desde a última consulta.
+// Consulta e limpa o indicador de overflow.
 bool houveOverflowComunicacao();
 
 #endif

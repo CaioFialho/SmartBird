@@ -6,6 +6,8 @@
 
 bool inicializarHidratacao();
 
+bool iniciarHidratacao(DadosSistema& dados);
+
 void atualizarHidratacao(DadosSistema& dados);
 
 bool cancelarHidratacao(DadosSistema& dados);
