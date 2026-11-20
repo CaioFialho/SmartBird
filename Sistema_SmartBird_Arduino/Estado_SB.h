@@ -1,199 +1,243 @@
-
-#ifndef ESTADO_SMARTBIRD_H
-#define ESTADO_SMARTBIRD_H
+#ifndef ESTADO_SB_H
+#define ESTADO_SB_H
 
 #include <Arduino.h>
 
 // ==========================================
-// ENUMS - ESTADOS DOS MÓDULOS
+// ENUMS - ESTADOS DO SISTEMA
 // ==========================================
 
-// Estados gerais do sistema
+// Estados gerais do equipamento.
 enum class EstadoSistema {
-  INICIALIZANDO,
-  OPERACIONAL,
-  ALERTA,
-  ERRO
+    INICIALIZANDO,
+    OPERACIONAL,
+    ALERTA,
+    ERRO
 };
 
-// Estados da alimentação
+// Estados do módulo de alimentação.
 enum class EstadoAlimentacao {
-  AGUARDANDO,
-  VERIFICANDO_PESO,
-  ALIMENTANDO,
-  FINALIZADO,
-  ERRO
+    AGUARDANDO,
+    VERIFICANDO_PESO,
+    ALIMENTANDO,
+    FINALIZADO,
+    ERRO
 };
 
-// Estados da hidratação
+// Estados do módulo de hidratação.
 enum class EstadoHidratacao {
-  AGUARDANDO,
-  VERIFICANDO_NIVEL,
-  ABASTECENDO,
-  FINALIZADO,
-  ERRO
+    AGUARDANDO,
+    VERIFICANDO_NIVEL,
+    ABASTECENDO,
+    FINALIZADO,
+    ERRO
 };
 
-// Situação de um horário agendado
+// Estado do nível de água no bebedouro.
+// A medição é realizada por uma boia binária.
+enum class EstadoRecipienteAgua {
+    INDEFINIDO,
+    BAIXO,
+    OK
+};
+
+// Situação de um horário agendado.
 enum class EstadoExecucao {
-  AGUARDANDO,
-  EXECUTADO,
-  PENDENTE,
-  RECUSADO
+    AGUARDANDO,
+    EXECUTADO,
+    PENDENTE,
+    RECUSADO
 };
 
 // ==========================================
 // STRUCTS - REGISTROS E AGENDAMENTOS
 // ==========================================
 
-
+// Registro da última execução de um horário.
 struct RegistroExecucao {
-  uint32_t dataReferencia = 0;
-  uint32_t horarioExecucaoEpoch = 0;
-  EstadoExecucao estado = EstadoExecucao::AGUARDANDO;
+    uint32_t dataReferencia = 0;
+    uint32_t horarioExecucaoEpoch = 0;
+
+    EstadoExecucao estado = EstadoExecucao::AGUARDANDO;
 };
 
-// Guarda uma ocorrência que ainda não foi resolvida
+// Guarda uma ocorrência que ainda não foi resolvida.
 struct RegistroPendencia {
-  uint32_t dataReferencia = 0;
-  uint32_t horarioOcorrenciaEpoch = 0;
+    uint32_t dataReferencia = 0;
+    uint32_t horarioOcorrenciaEpoch = 0;
 
-  EstadoExecucao estado = EstadoExecucao::AGUARDANDO;
-  bool ativa = false;
+    EstadoExecucao estado = EstadoExecucao::AGUARDANDO;
+    bool ativa = false;
 };
 
+// Representa um horário individual.
 struct Horario {
-  uint8_t hora = 0;
-  uint8_t minuto = 0;
-  bool ativo = false;
+    uint8_t hora = 0;
+    uint8_t minuto = 0;
 
-  RegistroExecucao registro;
-  RegistroPendencia pendencia;
+    bool ativo = false;
+
+    RegistroExecucao registro;
+    RegistroPendencia pendencia;
 };
 
-
-// Limite de horários por módulo
+// Limite de horários por módulo.
 constexpr uint8_t MAX_HORARIOS_DIARIOS = 4;
 
-// Agenda diária de um módulo
+// Agenda diária de um módulo.
 struct AgendaDiaria {
-  Horario horarios[MAX_HORARIOS_DIARIOS];
+    Horario horarios[MAX_HORARIOS_DIARIOS];
 
-  uint8_t quantidadeHorarios = 0;
+    uint8_t quantidadeHorarios = 0;
 };
 
 // ==========================================
-// STRUCTS - ALIMENTAÇÃO E HIDRATAÇÃO
+// STRUCTS - ALIMENTAÇÃO
 // ==========================================
 
-// Configurações de alimentação
+// Configurações de alimentação.
 struct ConfiguracaoAlimentacao {
-  float pesoAlvoGramas = 0.0;
+    float pesoAlvoGramas = 0.0f;
 };
 
-// Dados do módulo de alimentação
+// Dados operacionais do módulo de alimentação.
 struct DadosAlimentacao {
-  float pesoAtualGramas = 0.0;
+    float pesoAtualGramas = 0.0f;
 
-  bool comportaAberta = false;
+    bool leituraValida = false;
 
-  EstadoAlimentacao estado = EstadoAlimentacao::AGUARDANDO;
+    bool comportaAberta = false;
 
-  unsigned long ultimaExecucaoMs = 0;
+    EstadoAlimentacao estado = EstadoAlimentacao::AGUARDANDO;
+
+    unsigned long ultimaExecucaoMs = 0;
 };
 
-// Configurações de hidratação
+// ==========================================
+// STRUCTS - HIDRATAÇÃO
+// ==========================================
+
+// Configurações operacionais de hidratação.
 struct ConfiguracaoHidratacao {
-  float nivelAlvoPercentual = 0.0;
+    // Tempo máximo permitido para funcionamento da bomba.
+    uint32_t tempoMaximoBombaMs = 15000UL;
 };
 
-// Dados do módulo de hidratação
+// Dados operacionais do módulo de hidratação.
 struct DadosHidratacao {
-  float nivelAtualPercentual = 0.0;
+    // Estado detectado pela boia do bebedouro.
+    EstadoRecipienteAgua estadoRecipiente =
+        EstadoRecipienteAgua::INDEFINIDO;
 
-  bool bombaLigada = false;
+    // Estado físico da bomba.
+    bool bombaLigada = false;
 
-  EstadoHidratacao estado = EstadoHidratacao::AGUARDANDO;
+    // Estado atual do processo de hidratação.
+    EstadoHidratacao estado = EstadoHidratacao::AGUARDANDO;
 
-  unsigned long ultimaExecucaoMs = 0;
+    // Momento da última execução, em milissegundos.
+    unsigned long ultimaExecucaoMs = 0;
 };
 
 // ==========================================
 // STRUCTS - RESERVATÓRIOS
 // ==========================================
 
-// Configurações de um reservatório
+// Configurações de um reservatório.
 struct ConfiguracaoReservatorio {
-  float distanciaNivelCheioCm = 0.0;
-  float distanciaNivelVazioCm = 0.0;
+    // Distância medida quando o reservatório está cheio.
+    float distanciaNivelCheioCm = 0.0f;
 
-  float nivelMinimoPercentual = 20.0;
+    // Distância medida quando o reservatório está vazio.
+    float distanciaNivelVazioCm = 0.0f;
+
+    // Percentual mínimo para indicar nível baixo.
+    float nivelMinimoPercentual = 20.0f;
 };
 
-// Dados medidos de um reservatório
+// Dados medidos de um reservatório.
 struct DadosReservatorio {
-  float distanciaSensorCm = 0.0;
-  float nivelAtualPercentual = 0.0;
+    // Distância atual entre o sensor e a superfície.
+    float distanciaSensorCm = 0.0f;
 
-  bool leituraValida = false;
-  bool nivelBaixo = false;
+    // Nível calculado em percentual.
+    float nivelAtualPercentual = 0.0f;
+
+    // Indica se a leitura do sensor é válida.
+    bool leituraValida = false;
+
+    // Indica se o reservatório atingiu o nível mínimo.
+    bool nivelBaixo = false;
 };
 
-// Reservatório completo
+// Reservatório completo.
 struct Reservatorio {
-  ConfiguracaoReservatorio configuracao;
-  DadosReservatorio dados;
+    ConfiguracaoReservatorio configuracao;
+    DadosReservatorio dados;
 };
 
 // ==========================================
 // STRUCTS - MANUTENÇÃO
 // ==========================================
 
-// Configurações de manutenção
+// Configurações de manutenção.
 struct ConfiguracaoManutencao {
-  uint32_t intervaloLimpezaSegundos = 172800UL;
+    // Intervalo entre limpezas, em segundos.
+    uint32_t intervaloLimpezaSegundos = 172800UL;
 };
 
-// Dados do módulo de manutenção
+// Dados operacionais de manutenção.
 struct DadosManutencao {
-  uint32_t ultimaLimpezaEpoch = 0;
+    // Data e horário da última limpeza registrada.
+    uint32_t ultimaLimpezaEpoch = 0;
 
-  bool limpezaRegistrada = false;
-  bool limpezaPendente = false;
-  bool alertaAtivo = false;
+    // Indica se existe uma limpeza registrada.
+    bool limpezaRegistrada = false;
+
+    // Indica se a limpeza está pendente.
+    bool limpezaPendente = false;
+
+    // Indica se o alerta de manutenção está ativo.
+    bool alertaAtivo = false;
+};
+
+// ==========================================
+// STRUCTS - CONFIGURAÇÕES GERAIS
+// ==========================================
+
+struct ConfiguracaoSistema {
+    // Intervalo de referência para verificações periódicas.
+    uint32_t intervaloVerificacaoMs = 1000UL;
 };
 
 // ==========================================
 // STRUCTS - SISTEMA
 // ==========================================
 
-// Configurações gerais do sistema
-struct ConfiguracaoSistema {
-  uint32_t intervaloVerificacaoMs = 1000UL;
-};
-
-// Dados gerais do sistema
+// Estrutura central que reúne o estado completo do SmartBird.
 struct DadosSistema {
-  EstadoSistema estado = EstadoSistema::INICIALIZANDO;
 
-  // Reservatórios
-  Reservatorio reservatorioAlimento;
-  Reservatorio reservatorioAgua;
+    // Estado geral do equipamento.
+    EstadoSistema estado = EstadoSistema::INICIALIZANDO;
 
-  // Configurações
-  ConfiguracaoSistema configuracaoSistema;
-  ConfiguracaoAlimentacao configuracaoAlimentacao;
-  ConfiguracaoHidratacao configuracaoHidratacao;
-  ConfiguracaoManutencao configuracaoManutencao;
+    // Reservatórios de origem.
+    Reservatorio reservatorioAlimento;
+    Reservatorio reservatorioAgua;
 
-  // Dados operacionais
-  DadosAlimentacao alimentacao;
-  DadosHidratacao hidratacao;
-  DadosManutencao manutencao;
+    // Configurações.
+    ConfiguracaoSistema configuracaoSistema;
+    ConfiguracaoAlimentacao configuracaoAlimentacao;
+    ConfiguracaoHidratacao configuracaoHidratacao;
+    ConfiguracaoManutencao configuracaoManutencao;
 
-  // Agendas
-  AgendaDiaria agendaAlimentacao;
-  AgendaDiaria agendaHidratacao;
+    // Dados operacionais.
+    DadosAlimentacao alimentacao;
+    DadosHidratacao hidratacao;
+    DadosManutencao manutencao;
+
+    // Agendamentos.
+    AgendaDiaria agendaAlimentacao;
+    AgendaDiaria agendaHidratacao;
 };
 
 #endif
