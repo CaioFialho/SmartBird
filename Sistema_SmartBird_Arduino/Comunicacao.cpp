@@ -1,10 +1,7 @@
 #include "Comunicacao.h"
 #include <string.h>
 
-// ==========================================
-// BUFFER DE RECEPÇÃO
-// ==========================================
-
+// Buffer interno de recepção.
 static char bufferRecepcao[TAMANHO_BUFFER_MENSAGEM];
 
 static size_t indiceRecepcao = 0;
@@ -18,14 +15,11 @@ static bool overflowDetectado = false;
 void inicializarComunicacao() {
 
 #if SMARTBIRD_COMUNICACAO_USB
-
-    // A Serial USB é inicializada no setup() do .ino.
-
+    // Serial USB já é inicializada no setup() do arquivo .ino.
+    // Não chamar Serial.begin() novamente aqui.
 #else
-
     // UART dedicada ao ESP8266.
     Serial1.begin(9600);
-
 #endif
 
     indiceRecepcao = 0;
@@ -39,21 +33,16 @@ void inicializarComunicacao() {
 
 bool receberMensagem(char* destino, size_t capacidade) {
 
-    if (destino == nullptr ||
-        capacidade < TAMANHO_BUFFER_MENSAGEM) {
+    if (destino == nullptr || capacidade < TAMANHO_BUFFER_MENSAGEM) {
         return false;
     }
 
 #if SMARTBIRD_COMUNICACAO_USB
-
     while (Serial.available() > 0) {
         char caractere = Serial.read();
-
 #else
-
     while (Serial1.available() > 0) {
         char caractere = Serial1.read();
-
 #endif
 
         // Final da mensagem.
@@ -83,17 +72,16 @@ bool receberMensagem(char* destino, size_t capacidade) {
             return true;
         }
 
-        // Ignora CR.
+        // Ignora o CR usado em finais de linha CRLF.
         if (caractere == '\r') {
             continue;
         }
 
-        // Descarta o restante de mensagens excedentes.
+        // Se a mensagem exceder o limite, descarta até o próximo \n.
         if (descartandoMensagem) {
             continue;
         }
 
-        // Proteção contra overflow.
         if (indiceRecepcao >= MAX_BYTES_MENSAGEM) {
 
             indiceRecepcao = 0;
@@ -103,7 +91,8 @@ bool receberMensagem(char* destino, size_t capacidade) {
             continue;
         }
 
-        bufferRecepcao[indiceRecepcao++] = caractere;
+        bufferRecepcao[indiceRecepcao] = caractere;
+        indiceRecepcao++;
     }
 
     return false;
@@ -121,35 +110,28 @@ bool enviarMensagem(const char* mensagem) {
 
     size_t tamanho = strlen(mensagem);
 
-    if (tamanho == 0 ||
-        tamanho > MAX_BYTES_MENSAGEM) {
+    if (tamanho == 0 || tamanho > MAX_BYTES_MENSAGEM) {
         return false;
     }
 
-    // Não permite múltiplas mensagens na mesma chamada.
+    // Não permite enviar várias mensagens em uma única chamada.
     if (strchr(mensagem, '\n') != nullptr ||
         strchr(mensagem, '\r') != nullptr) {
         return false;
     }
 
 #if SMARTBIRD_COMUNICACAO_USB
-
     Serial.write(
         reinterpret_cast<const uint8_t*>(mensagem),
         tamanho
     );
-
     Serial.write('\n');
-
 #else
-
     Serial1.write(
         reinterpret_cast<const uint8_t*>(mensagem),
         tamanho
     );
-
     Serial1.write('\n');
-
 #endif
 
     return true;

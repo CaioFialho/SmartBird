@@ -76,7 +76,7 @@ bool definirHorario(
   Horario& horario = agenda.horarios[indice];
 
   // Não altera um horário com pendência ativa
-  if (horario.pendencia.ativa) return false;
+  if (horario.pendencia.ativa || horario.registro.estado == EstadoExecucao::PENDENTE || horario.registro.estado == EstadoExecucao::EXECUTANDO) return false;
 
   // Impede horários duplicados na mesma agenda
   for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; i++) {
@@ -119,7 +119,7 @@ bool removerHorario(AgendaDiaria& agenda, uint8_t indice) {
   if (!horario.ativo) return false;
 
   // Não permite remover horários com pendências
-  if (horario.pendencia.ativa) return false;
+  if (horario.pendencia.ativa || horario.registro.estado == EstadoExecucao::PENDENTE || horario.registro.estado == EstadoExecucao::EXECUTANDO) return false;
 
   horario.ativo = false;
   horario.hora = 0;
@@ -209,7 +209,9 @@ bool sincronizarAgenda(
     }
 
     // Não permite perder uma pendência ativa
-    if (horario.pendencia.ativa) {
+    if (horario.pendencia.ativa ||
+        horario.registro.estado == EstadoExecucao::PENDENTE ||
+        horario.registro.estado == EstadoExecucao::EXECUTANDO) {
       return false;
     }
 
@@ -366,7 +368,8 @@ static void verificarAgenda(
       RegistroExecucao& registro = horario.registro;
 
       // Não sobrescreve uma execução ainda pendente
-      if (registro.estado == EstadoExecucao::PENDENTE) {
+      if (registro.estado == EstadoExecucao::PENDENTE ||
+          registro.estado == EstadoExecucao::EXECUTANDO) {
         continue;
       }
 
@@ -421,9 +424,11 @@ void verificarAgendamentos(
     return;
   }
 
-  // Se o relógio retroceder, reinicia a referência
-  if (instanteAtual < ultimoInstanteVerificado) {
-
+  // Se o relógio retroceder ou saltar muito à frente (por exemplo,
+  // após sincronização do RTC), reinicia a referência sem varrer anos
+  // de histórico e sem disparar todos os horários antigos.
+  if (instanteAtual < ultimoInstanteVerificado ||
+      instanteAtual - ultimoInstanteVerificado > 120UL) {
     ultimoInstanteVerificado = instanteAtual;
     return;
   }
@@ -467,7 +472,8 @@ bool registrarExecucaoConcluida(
   }
 
   // Só confirma um agendamento pendente
-  if (horario.registro.estado != EstadoExecucao::PENDENTE) {
+  if (horario.registro.estado != EstadoExecucao::PENDENTE &&
+      horario.registro.estado != EstadoExecucao::EXECUTANDO) {
     return false;
   }
 

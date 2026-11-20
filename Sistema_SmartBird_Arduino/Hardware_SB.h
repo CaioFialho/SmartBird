@@ -32,4 +32,17 @@ constexpr uint8_t SERVO_COMPORTA = 28;
 constexpr uint8_t RELE_BOMBA_AGUA = 29;
 constexpr uint8_t SENSOR_BOIA_AGUA = 30;
 
+// ==========================================
+// INTERFACE FISICA (LCD I2C usa SDA=20 e SCL=21 no Mega)
+// ==========================================
+
+constexpr uint8_t BOTAO_ANTERIOR = 31;
+constexpr uint8_t BOTAO_OK = 32;
+constexpr uint8_t BOTAO_PROXIMO = 33;
+constexpr uint8_t LED_SISTEMA = 34;
+constexpr uint8_t LED_ACAO = 35;
+constexpr uint8_t LED_AVISO = 36;
+constexpr uint8_t LED_CRITICO = 37;
+constexpr uint8_t BUZZER_INTERFACE = 38;
+
 #endif

@@ -1,7 +1,6 @@
 #include "Controle_SB.h"
 
 #include "Estado_SB.h"
-#include "Hardware_SB.h"
 #include "Reservatorios.h"
 #include "Alimentacao.h"
 #include "Hidratacao.h"
@@ -9,28 +8,129 @@
 #include "Manutencao.h"
 #include "Comunicacao.h"
 #include "Protocolo.h"
+#include "Interface.h"
 
-// Estado compartilhado do equipamento.
 static DadosSistema dados;
-
-// Evita executar inicializações mais de uma vez.
 static bool controleInicializado = false;
+static bool falhaInicializacao = false;
+static unsigned long ultimaVerificacaoRTC = 0;
+static bool rtcDisponivelAtual = false;
+static int8_t horarioAlimentacaoEmExecucao = -1;
+static int8_t horarioHidratacaoEmExecucao = -1;
 
-// ==========================================
-// INICIALIZAÇÃO
-// ==========================================
+namespace {
+void atualizarEstadoGeral() {
+    const bool erroModulo =
+        dados.alimentacao.estado == EstadoAlimentacao::ERRO ||
+        dados.hidratacao.estado == EstadoHidratacao::ERRO;
 
-void inicializarControle() {
+    const bool rtcOk = rtcDisponivelAtual;
 
-    if (controleInicializado) {
-        return;
+    const bool alertaReservatorio =
+        !dados.reservatorioAlimento.dados.leituraValida ||
+        !dados.reservatorioAgua.dados.leituraValida ||
+        dados.reservatorioAlimento.dados.nivelBaixo ||
+        dados.reservatorioAgua.dados.nivelBaixo;
+
+    if (falhaInicializacao || erroModulo) {
+        dados.estado = EstadoSistema::ERRO;
+    } else if (!rtcOk || alertaReservatorio || dados.manutencao.alertaAtivo) {
+        dados.estado = EstadoSistema::ALERTA;
+    } else {
+        dados.estado = EstadoSistema::OPERACIONAL;
+    }
+}
+
+void concluirAgendamento(AgendaDiaria& agenda, int8_t& indice) {
+    if (indice < 0) return;
+    DateTime agora;
+    if (obterDataHora(agora)) {
+        registrarExecucaoConcluida(agenda, static_cast<uint8_t>(indice), agora);
+    }
+    indice = -1;
+}
+
+void processarAgendamentos() {
+    const unsigned long millisAgora = millis();
+    if (ultimaVerificacaoRTC != 0 &&
+        millisAgora - ultimaVerificacaoRTC < 1000UL) return;
+    ultimaVerificacaoRTC = millisAgora;
+
+    DateTime agora;
+    rtcDisponivelAtual = obterDataHora(agora);
+    if (!rtcDisponivelAtual) return;
+
+    verificarAgendamentos(dados, agora);
+
+    // Conclusão dos agendamentos que já iniciaram.
+    if (horarioAlimentacaoEmExecucao >= 0) {
+        if (dados.alimentacao.estado == EstadoAlimentacao::FINALIZADO) {
+            concluirAgendamento(dados.agendaAlimentacao, horarioAlimentacaoEmExecucao);
+        } else if (dados.alimentacao.estado == EstadoAlimentacao::ERRO) {
+            dados.agendaAlimentacao.horarios[horarioAlimentacaoEmExecucao].registro.estado =
+                EstadoExecucao::RECUSADO;
+            horarioAlimentacaoEmExecucao = -1;
+        }
     }
 
-    Serial.println("================================");
-    Serial.println("       SMARTBIRD INICIANDO");
-    Serial.println("================================");
+    if (horarioHidratacaoEmExecucao >= 0) {
+        if (dados.hidratacao.estado == EstadoHidratacao::FINALIZADO) {
+            concluirAgendamento(dados.agendaHidratacao, horarioHidratacaoEmExecucao);
+        } else if (dados.hidratacao.estado == EstadoHidratacao::ERRO) {
+            dados.agendaHidratacao.horarios[horarioHidratacaoEmExecucao].registro.estado =
+                EstadoExecucao::RECUSADO;
+            horarioHidratacaoEmExecucao = -1;
+        }
+    }
 
-    // Configurações dos reservatórios de origem.
+    // Alimentação: só inicia quando o módulo está livre.
+    if (horarioAlimentacaoEmExecucao < 0 &&
+        (dados.alimentacao.estado == EstadoAlimentacao::AGUARDANDO ||
+         dados.alimentacao.estado == EstadoAlimentacao::FINALIZADO)) {
+        for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; ++i) {
+            Horario& h = dados.agendaAlimentacao.horarios[i];
+            if (!h.ativo || h.registro.estado != EstadoExecucao::PENDENTE) continue;
+            if (iniciarAlimentacao(dados)) {
+                h.registro.estado = EstadoExecucao::EXECUTANDO;
+                horarioAlimentacaoEmExecucao = static_cast<int8_t>(i);
+            } else if (dados.alimentacao.estado == EstadoAlimentacao::ERRO) {
+                h.registro.estado = EstadoExecucao::RECUSADO;
+            }
+            break;
+        }
+    }
+
+    // Hidratação: a boia tem prioridade; se o nível já estiver adequado,
+    // o horário é considerado atendido sem ligar a bomba.
+    if (horarioHidratacaoEmExecucao < 0) {
+        for (uint8_t i = 0; i < MAX_HORARIOS_DIARIOS; ++i) {
+            Horario& h = dados.agendaHidratacao.horarios[i];
+            if (!h.ativo || h.registro.estado != EstadoExecucao::PENDENTE) continue;
+
+            if (dados.hidratacao.estadoRecipiente == EstadoRecipienteAgua::OK) {
+                h.registro.estado = EstadoExecucao::EXECUTANDO;
+                registrarExecucaoConcluida(dados.agendaHidratacao, i, agora);
+            } else if (dados.hidratacao.estadoRecipiente == EstadoRecipienteAgua::BAIXO &&
+                       dados.hidratacao.estado == EstadoHidratacao::ABASTECENDO) {
+                // O módulo pode já ter iniciado o abastecimento automaticamente.
+                h.registro.estado = EstadoExecucao::EXECUTANDO;
+                horarioHidratacaoEmExecucao = static_cast<int8_t>(i);
+            } else if (dados.hidratacao.estadoRecipiente == EstadoRecipienteAgua::BAIXO &&
+                       dados.hidratacao.estado == EstadoHidratacao::AGUARDANDO) {
+                if (iniciarHidratacao(dados)) {
+                    h.registro.estado = EstadoExecucao::EXECUTANDO;
+                    horarioHidratacaoEmExecucao = static_cast<int8_t>(i);
+                }
+            }
+            break;
+        }
+    }
+}
+}
+
+void inicializarControle() {
+    if (controleInicializado) return;
+
     dados.reservatorioAlimento.configuracao.distanciaNivelCheioCm = 5.0f;
     dados.reservatorioAlimento.configuracao.distanciaNivelVazioCm = 35.0f;
     dados.reservatorioAlimento.configuracao.nivelMinimoPercentual = 20.0f;
@@ -39,89 +139,49 @@ void inicializarControle() {
     dados.reservatorioAgua.configuracao.distanciaNivelVazioCm = 30.0f;
     dados.reservatorioAgua.configuracao.nivelMinimoPercentual = 20.0f;
 
-    bool inicializacaoComFalha = false;
-    bool rtcDisponivel = false;
-
-    // Reservatórios.
+    falhaInicializacao = false;
     inicializarReservatorios();
-    Serial.println("Reservatorios inicializados.");
 
-    // Alimentação.
-    if (!inicializarAlimentacao()) {
-        Serial.println("ERRO: falha ao inicializar alimentacao.");
-        inicializacaoComFalha = true;
+    if (!inicializarAlimentacao()) falhaInicializacao = true;
+    if (!inicializarHidratacao()) falhaInicializacao = true;
+    if (!inicializarTempo()) {
+        // RTC indisponível gera alerta, não impede funções locais manuais.
     } else {
-        Serial.println("Modulo de alimentacao inicializado.");
+        DateTime agora;
+        rtcDisponivelAtual = obterDataHora(agora);
     }
+    if (!inicializarManutencao()) falhaInicializacao = true;
 
-    // Hidratação.
-    if (!inicializarHidratacao()) {
-        Serial.println("ERRO: falha ao inicializar hidratacao.");
-        inicializacaoComFalha = true;
-    } else {
-        Serial.println("Modulo de hidratacao inicializado.");
-    }
-
-    // Relógio.
-    rtcDisponivel = inicializarTempo();
-
-    if (rtcDisponivel) {
-        Serial.println("RTC inicializado.");
-    } else {
-        Serial.println("AVISO: RTC indisponivel.");
-    }
-
-    // Manutenção.
-    if (!inicializarManutencao()) {
-        Serial.println("ERRO: falha ao inicializar manutencao.");
-        inicializacaoComFalha = true;
-    } else {
-        Serial.println("Modulo de manutencao inicializado.");
-    }
-
-    // Comunicação.
     inicializarComunicacao();
-
-#if SMARTBIRD_COMUNICACAO_USB
-    Serial.println("Comunicacao USB de teste inicializada.");
-#else
-    Serial.println("Comunicacao UART inicializada.");
-#endif
-
-    // Define o estado inicial do sistema.
-    if (inicializacaoComFalha) {
-        dados.estado = EstadoSistema::ERRO;
-    } else if (!rtcDisponivel) {
-        dados.estado = EstadoSistema::ALERTA;
-    } else {
-        dados.estado = EstadoSistema::OPERACIONAL;
-    }
-
+    inicializarInterface(dados);
     controleInicializado = true;
 
-    Serial.println("Inicializacao do controle concluida.");
-}
-
-// ==========================================
-// CICLO PRINCIPAL
-// ==========================================
-
-void atualizarControle() {
-
-    if (!controleInicializado) {
-        return;
-    }
-
-    // Recepção e processamento de comandos.
-    char mensagem[TAMANHO_BUFFER_MENSAGEM];
-
-    if (receberMensagem(mensagem, sizeof(mensagem))) {
-        processarMensagem(mensagem, dados);
-    }
-
-    // Atualização dos módulos físicos.
     atualizarReservatorios(dados);
     atualizarAlimentacao(dados);
     atualizarHidratacao(dados);
     atualizarManutencao(dados);
+    atualizarEstadoGeral();
+}
+
+void atualizarControle() {
+    if (!controleInicializado) return;
+
+    char mensagem[TAMANHO_BUFFER_MENSAGEM];
+    if (receberMensagem(mensagem, sizeof(mensagem))) {
+        processarMensagem(mensagem, dados);
+    }
+
+    if (houveOverflowComunicacao()) {
+#if !SMARTBIRD_COMUNICACAO_USB
+        Serial.println(F("AVISO: mensagem serial excedeu o limite."));
+#endif
+    }
+
+    atualizarReservatorios(dados);
+    atualizarAlimentacao(dados);
+    atualizarHidratacao(dados);
+    atualizarManutencao(dados);
+    processarAgendamentos();
+    atualizarEstadoGeral();
+    atualizarInterface(dados);
 }
