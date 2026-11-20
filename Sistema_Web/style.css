@@ -30,10 +30,10 @@
 body { margin: 0; min-width: 280px; }
 body:has(dialog[open]) { overflow: hidden; }
 html:has(#dashboard-app:not([hidden])) { scroll-padding-top: calc(var(--header-height) + env(safe-area-inset-top) + .5rem); scrollbar-gutter: stable; }
-button, input, textarea { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button, summary { cursor: pointer; touch-action: manipulation; }
 button:disabled { cursor: default; opacity: .58; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible, [tabindex="0"]:focus-visible {
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible, [tabindex="0"]:focus-visible {
   outline: 2px solid var(--green);
   outline-offset: 3px;
 }
@@ -45,7 +45,7 @@ h1[tabindex="-1"] { width: fit-content; }
 h1[tabindex="-1"]:focus-visible { outline: 2px solid var(--green); outline-offset: 4px; border-radius: 3px; }
 p { line-height: 1.5; }
 label { font-size: .9rem; font-weight: 650; }
-input:not([type="checkbox"]), textarea {
+input:not([type="checkbox"]), select, textarea {
   display: block;
   width: 100%;
   min-height: 44px;
@@ -556,8 +556,9 @@ input[type="checkbox"] { accent-color: var(--green); width: 1.1rem; height: 1.1r
   .time-list .icon-button:not(:disabled):hover { background: #fce6e8; color: #8c192c; }
   .config-reference-toggle:hover { color: var(--green); }
 }
-.time-edit { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: end; }
-.time-edit input { margin-top: .25rem; }
+.time-edit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; align-items: end; }
+.time-edit select { margin-top: .25rem; }
+.time-edit button { grid-column: 1 / -1; justify-self: start; }
 .scenario-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
 .scenario-grid > .button { --button-fill: var(--beige); justify-content: flex-start; min-height: 52px; padding: .65rem .8rem; text-align: start; }
 .button[aria-pressed="true"] { --button-fill: #e4eee7; --button-line: var(--green); }
@@ -608,6 +609,7 @@ input[type="checkbox"] { accent-color: var(--green); width: 1.1rem; height: 1.1r
 .event-history time { display: block; margin-top: .25rem; color: var(--muted); font-size: .8rem; }
 .event-entry { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: .65rem; }
 .event-entry > .status-icon { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 8px; background: var(--status-fill); }
+.event-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-top: .45rem; }
 .toasts { position: fixed; z-index: 9; top: .8rem; right: .8rem; width: min(360px, calc(100% - 1.6rem)); display: grid; gap: .5rem; max-height: calc(100dvh - 2rem); overflow: auto; pointer-events: none; }
 #dashboard-app:not([hidden]) ~ .toasts { top: calc(var(--header-height) + env(safe-area-inset-top) + .75rem); max-height: calc(100dvh - var(--header-height) - 2rem - env(safe-area-inset-top)); }
 .toast { pointer-events: auto; display: grid; grid-template-columns: 1fr auto; align-items: start; gap: .45rem; border: 1px solid var(--line); background: var(--paper); border-radius: 10px; padding: .55rem .5rem .55rem .8rem; box-shadow: 0 4px 20px #15261923; font-size: .88rem; overflow-wrap: anywhere; animation: show-status var(--motion-panel) var(--ease); }
@@ -683,7 +685,7 @@ input[type="checkbox"] { accent-color: var(--green); width: 1.1rem; height: 1.1r
   .dialog-actions { display: grid; justify-content: stretch; }
 }
 @media (max-width: 390px) {
-  .field-grid, .scenario-grid, .time-edit { grid-template-columns: 1fr; }
+  .field-grid, .scenario-grid { grid-template-columns: 1fr; }
   .events-heading .dialog-icon { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {

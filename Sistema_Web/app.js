@@ -52,6 +52,12 @@
   const $ = (id) => document.getElementById(id);
   const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
   const isTime = (value) => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  const isScheduleSlot = (value) => isTime(value) && /:(00|30)$/.test(value);
+  const isFirmwareTargetWeight = (value) => Number.isFinite(value) && value >= 1 && value <= 500;
+  const scheduleHourOptions = Array.from({ length: 24 }, (_, hour) => {
+    const label = String(hour).padStart(2, '0');
+    return `<option value="${label}">${label}</option>`;
+  }).join('');
   const isPercent = (value) => Number.isFinite(value) && value >= 0 && value <= 100;
   const owns = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const copy = (value) => JSON.parse(JSON.stringify(value));
@@ -59,11 +65,11 @@
   const equipmentState = () => ({
     status: {}, reservoirs: {}, containers: {}, pumpOn: null, cleaningDue: null, updatedAt: null, systemInfo: {},
     schedule: null, draft: null, draftBase: null, scheduleStale: false,
-    confirmedConfig: {}, configDrafts: {}, missed: []
+    confirmedConfig: {}, configDrafts: {}, missed: [], decidedMissed: new Set(), eventScope: { closed: false }
   });
   const AppState = {
     signedIn: false, connection: 'offline', settings: null,
-    equipment: equipmentState(), history: [], unread: 0, view: 'dashboard'
+    equipment: equipmentState(), history: [], view: 'dashboard'
   };
   const pendingCommands = new Map();
   const diagnostics = {};
@@ -211,7 +217,7 @@
       }
       UIController.render();
       if (firstConnection) $('dashboard-title').focus();
-      if (!diagnostics.active?.()) this.initialize();
+      //if (!diagnostics.active?.()) this.initialize();
     },
     failure(client, details) {
       if (client && client !== this.client) return;
@@ -311,6 +317,19 @@
         if (!quiet) ToastService.show('Agenda em atualização', 'Aguarde a confirmação do comando anterior.', 'warning');
         return false;
       }
+      if (action === 'set_schedule') {
+        const schedule = ScheduleManager.normalize(data);
+        if (!schedule) {
+          ToastService.show('Agenda inválida', 'Confira os horários de alimentação e hidratação.', 'warning');
+          return false;
+        }
+        const warning = ScheduleManager.slotWarning(schedule);
+        if (warning) {
+          ToastService.show('Horário fora do intervalo', warning, 'warning');
+          return false;
+        }
+        data = schedule;
+      }
       const id = (action === 'sync_time' ? 'sync-' : 'cmd-') + (++commandCounter).toString();
       const payload = JSON.stringify({ v: '1.0', type: 'command', id, source: 'web', action, data });
       if (new TextEncoder().encode(payload).length > MAX_PAYLOAD_BYTES) {
@@ -378,7 +397,12 @@
     resolve(message) {
       const command = pendingCommands.get(message.id);
       if (!command) {
-        if (message.type === 'error' && !message.id) this.showError('Erro do equipamento', message.error);
+        if (message.type === 'error' && !message.id) {
+          const text = this.errorText(message.error);
+          const simulated = diagnostics.active?.() ? 'Simulador · ' : '';
+          event_handler.record(simulated + text, 'danger', message.timestamp, { manual: true });
+          ToastService.show('Erro do equipamento', text, 'danger');
+        }
         return;
       }
       if (message.type === 'ack' && command.state === 'waiting_ack') {
@@ -415,11 +439,14 @@
       }
     },
     showError(title, error = {}) {
+      ToastService.show(title, this.errorText(error), 'danger');
+    },
+    errorText(error) {
       if (!isRecord(error)) error = {};
       const code = typeof error.code === 'string' ? error.code : '';
       const description = owns(ERROR_MESSAGES, code) ? ERROR_MESSAGES[code] : 'O equipamento informou um erro.';
       const message = typeof error.message === 'string' ? error.message : '';
-      ToastService.show(title, [code, description, message].filter(Boolean).join(' · '), 'danger');
+      return [code, description, message].filter(Boolean).join(' · ');
     },
     apply(command, data) {
       if (!isRecord(data)) return false;
@@ -430,8 +457,8 @@
           for (const key of ['system', 'feeding', 'watering', 'maintenance', 'rtc']) {
             if (typeof data[key] === 'string') equipment.status[key] = data[key];
           }
-          if (data.maintenance === 'normal') equipment.cleaningDue = false;
-          if (data.maintenance === 'cleaning_due') equipment.cleaningDue = true;
+          if (data.maintenance === 'normal') telemetry_handler.updateCleaning(false);
+          if (data.maintenance === 'cleaning_due') telemetry_handler.updateCleaning(true);
           return true;
         case 'get_telemetry':
           return telemetry_handler.apply(data);
@@ -459,11 +486,15 @@
         }
         case 'ack_cleaning':
           if (data.maintenance_timer_reset !== true || data.cleaning_due !== false) return false;
-          equipment.cleaningDue = false;
+          telemetry_handler.updateCleaning(false);
           return true;
         case 'set_feeding_config':
-          if (data.configuration_updated !== true) return false;
-          equipment.confirmedConfig.feeding = command.data;
+          if (data.configuration_updated !== true || (owns(data, 'target_weight_g') &&
+            (!Number.isFinite(data.target_weight_g) || data.target_weight_g <= 0))) return false;
+          equipment.confirmedConfig.feeding = {
+            ...equipment.confirmedConfig.feeding, ...command.data,
+            target_weight_g: data.target_weight_g ?? command.data.target_weight_g
+          };
           return true;
         case 'sync_time':
           if (data.rtc_updated !== true) return false;
@@ -500,6 +531,11 @@
         reading.level_state = level;
         reading.low = level === 'low';
       }
+      if (level === 'ok') event_handler.resolveAlert('water_bowl');
+    },
+    updateCleaning(due) {
+      AppState.equipment.cleaningDue = due;
+      if (!due) event_handler.resolveAlert('cleaning');
     },
     apply(data) {
       const equipment = AppState.equipment;
@@ -513,6 +549,7 @@
           low: typeof reading.low === 'boolean' ? reading.low : undefined,
           distance_cm: Number.isFinite(reading.distance_cm) && reading.distance_cm > 0 ? reading.distance_cm : undefined
         } : { valid: false };
+        if (equipment.reservoirs[name].low === false) event_handler.resolveAlert('reservoir:' + name);
         receivedReading = true;
       }
       for (const name of ['food_bowl', 'water_bowl']) {
@@ -528,6 +565,7 @@
           }
         }
         equipment.containers[name] = measurement;
+        if (name === 'water_bowl' && measurement.level_state === 'ok') event_handler.resolveAlert('water_bowl');
         receivedReading = true;
       }
       if (isRecord(data.watering)) {
@@ -536,7 +574,7 @@
       for (const module of Object.keys(MODULES)) {
         if (typeof data[module]?.state === 'string') equipment.status[module] = data[module].state;
       }
-      if (typeof data.maintenance?.cleaning_due === 'boolean') equipment.cleaningDue = data.maintenance.cleaning_due;
+      if (typeof data.maintenance?.cleaning_due === 'boolean') this.updateCleaning(data.maintenance.cleaning_due);
       if (receivedReading) equipment.updatedAt = new Date();
       return receivedReading;
     }
@@ -544,19 +582,41 @@
 
   // event_handler
   const event_handler = {
-    record(text, tone, timestamp = new Date()) {
-      const date = new Date(timestamp);
-      AppState.history.unshift({ text, tone, date: Number.isNaN(date.getTime()) ? new Date() : date });
-      if (AppState.history.length > 100) AppState.history.pop();
+    historyActions: new WeakMap(),
+    activeAlert(key) {
+      return AppState.history.find(({ alert }) => alert?.scope === AppState.equipment.eventScope &&
+        alert.key === key && !alert.resolved);
+    },
+    resolveAlert(key) {
+      const entry = this.activeAlert(key);
+      if (entry) this.resolveEntry(entry);
+    },
+    resolveEntry(entry) {
+      entry.alert.resolved = true;
       if ($('events-dialog').open) this.renderHistory();
-      else AppState.unread += 1;
+    },
+    record(text, tone, timestamp = new Date(), alert = null) {
+      if (alert?.key !== undefined && this.activeAlert(alert.key)) return false;
+      const date = new Date(timestamp);
+      const open = $('events-dialog').open;
+      AppState.history.unshift({
+        text, tone, date: Number.isNaN(date.getTime()) ? new Date() : date, unread: !open,
+        alert: alert && { ...alert, scope: AppState.equipment.eventScope, resolved: false }
+      });
+      for (let index = AppState.history.length - 1; index >= 0 && AppState.history.length > 100; index -= 1) {
+        const entry = AppState.history[index];
+        if (!entry.alert || entry.alert.resolved) AppState.history.splice(index, 1);
+      }
+      if (open) this.renderHistory();
       UIController.render();
+      return true;
     },
     receive(message) {
       const data = message.data;
       if (!isRecord(data)) return;
       let text;
       let tone = 'success';
+      let alert = null;
       const equipment = AppState.equipment;
       switch (data.name) {
         case 'feeding_completed':
@@ -587,6 +647,7 @@
           }
           text = name + ' em nível baixo' + level + '. Reabasteça o reservatório.';
           tone = 'warning';
+          alert = { key: 'reservoir:' + data.reservoir };
           break;
         }
         case 'container_level_low':
@@ -594,32 +655,42 @@
           telemetry_handler.updateKnownWaterBowlLevel('low');
           text = 'A boia do bebedouro indicou nível baixo.';
           tone = 'warning';
+          alert = { key: 'water_bowl' };
           break;
         case 'cleaning_due':
-          equipment.cleaningDue = true;
+          telemetry_handler.updateCleaning(true);
           text = 'Limpeza necessária. Higienize a gaiola e confirme no painel.';
           tone = 'warning';
+          alert = { key: 'cleaning' };
           break;
         case 'scheduled_execution_missed': {
           if (!owns(MODULES, data.module) || !isTime(data.scheduled_time) || data.action_required !== 'user_decision') return;
+          const timestamp = message.timestamp;
+          const occurrence = typeof timestamp === 'string' && Number.isFinite(Date.parse(timestamp)) ?
+            JSON.stringify([data.module, data.scheduled_time, timestamp]) : null;
           const duplicate = equipment.missed.some((item) => item.module === data.module &&
-            item.scheduled_time === data.scheduled_time && item.timestamp === message.timestamp);
-          if (duplicate) return;
-          equipment.missed.push({ ...data, timestamp: message.timestamp });
+            item.scheduled_time === data.scheduled_time && item.timestamp === timestamp);
+          if (duplicate || equipment.decidedMissed.has(occurrence)) return;
+          const missed = { ...data, timestamp, occurrence };
+          equipment.missed.push(missed);
           text = 'A rotina de ' + MODULES[data.module].label.toLowerCase() + ' das ' + data.scheduled_time + ' precisa da sua decisão.';
           tone = 'warning';
+          alert = { key: missed };
           break;
         }
         default:
           return;
       }
       const simulated = diagnostics.active?.() ? 'Simulador · ' : '';
-      this.record(simulated + text, tone, message.timestamp);
-      ToastService.show(simulated + 'Evento do equipamento', text, tone);
+      if (this.record(simulated + text, tone, message.timestamp, alert)) {
+        ToastService.show(simulated + 'Evento do equipamento', text, tone);
+      } else {
+        UIController.render();
+      }
       if (data.name === 'scheduled_execution_missed') this.review();
     },
     review() {
-      const queue = AppState.equipment.missed;
+      const { missed: queue, decidedMissed } = AppState.equipment;
       const missed = queue[0];
       if (!missed) return;
       const { action, label } = MODULES[missed.module];
@@ -632,6 +703,11 @@
           if (decision === 'confirm' && !command_service.send(action)) return;
           if (decision !== 'cancel' && decision !== 'confirm') return;
           queue.shift();
+          if (missed.occurrence) {
+            decidedMissed.add(missed.occurrence);
+            if (decidedMissed.size > 100) decidedMissed.delete(decidedMissed.values().next().value);
+          }
+          this.resolveAlert(missed);
           const prefix = diagnostics.active?.() ? 'Simulador · ' : '';
           const text = decision === 'cancel' ? 'Decisão registrada. Aguardar o próximo horário de ' :
             'Execução manual solicitada para a rotina perdida de ';
@@ -643,6 +719,8 @@
     },
     renderHistory() {
       const list = $('event-history');
+      const focusedEntry = this.historyActions.get(document.activeElement);
+      let focusTarget;
       list.replaceChildren();
       if (!AppState.history.length) {
         const empty = document.createElement('li');
@@ -657,9 +735,39 @@
         time.dateTime = entry.date.toISOString();
         time.textContent = entry.date.toLocaleString('pt-BR');
         content.append(time, entry.text);
+        if (entry.alert) {
+          const state = document.createElement('span');
+          state.className = 'badge ' + (entry.alert.resolved ? 'success' : entry.tone);
+          state.textContent = entry.alert.resolved ? 'Resolvido' : 'Ativo';
+          const actions = document.createElement('div');
+          actions.className = 'event-actions';
+          actions.append(state);
+          if (entry.alert.resolved || entry.alert.manual || entry.alert.scope.closed) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'button small';
+            button.textContent = entry.alert.resolved ? 'Remover' : 'Marcar como resolvido';
+            button.addEventListener('click', () => {
+              if (!entry.alert.resolved) {
+                this.resolveEntry(entry);
+                return;
+              }
+              const index = AppState.history.indexOf(entry);
+              if (index < 0) return;
+              AppState.history.splice(index, 1);
+              this.renderHistory();
+              UIController.render();
+            });
+            this.historyActions.set(button, entry);
+            if (entry === focusedEntry) focusTarget = button;
+            actions.append(button);
+          }
+          content.append(actions);
+        }
         item.append(makeIcon(STATUS_ICONS[entry.tone], ' status-icon'), content);
         list.append(item);
       }
+      if (focusedEntry) (focusTarget || $('events-dialog').querySelector('[value="close"]')).focus();
     }
   };
 
@@ -678,6 +786,14 @@
         schedule[module] = { enabled: value.enabled, times: [...value.times].sort() };
       }
       return schedule;
+    },
+    slotWarning(schedule) {
+      if (!schedule) return '';
+      const invalid = Object.entries(MODULES).flatMap(([module, { label }]) => {
+        const times = schedule[module].times.filter((time) => !isScheduleSlot(time));
+        return times.length ? [label + ' (' + times.join(', ') + ')'] : [];
+      });
+      return invalid.length ? 'Use minutos 00 ou 30. Horários a ajustar · ' + invalid.join(' · ') + '.' : '';
     },
     load(data, saved = false) {
       const schedule = this.normalize(data);
@@ -707,14 +823,16 @@
       const locked = this.writing();
       const conflict = this.conflicted();
       const loading = Boolean(command_service.pending('get_schedule'));
+      const slotWarning = this.slotWarning(draft);
       const save = $('save-schedule');
-      save.disabled = !command_service.available() || locked || loading || scheduleStale || !this.dirty() || conflict;
+      save.disabled = !command_service.available() || locked || loading || scheduleStale || !this.dirty() || conflict || Boolean(slotWarning);
       $('load-schedule').disabled = !command_service.available() || loading || locked;
       $('discard-schedule').hidden = !this.dirty();
       $('discard-schedule').disabled = locked;
       const status = locked ? [UIController.phase(command_service.pending('set_schedule') || command_service.pending('remove_schedule')), 'info'] :
         conflict ? ['A agenda do equipamento mudou. Descarte o rascunho para editar a versão atual.', 'warning'] :
         loading ? ['Consultando agenda…', 'info'] : scheduleStale ? ['Consulte a agenda antes de salvar.', 'warning'] :
+        slotWarning ? [slotWarning, 'warning'] :
         this.dirty() ? ['Alterações aguardando envio.', 'warning'] : draft ? ['Agenda confirmada pelo equipamento.', 'success'] :
         ['Aguardando a agenda do equipamento.', 'neutral'];
       UIController.setStatus($('schedule-status'), ...status);
@@ -723,7 +841,8 @@
       this.lastRender = signature;
       this.renderedDraft = draft;
       const container = $('schedule-panels');
-      const inputs = [...container.querySelectorAll('input[type="time"]')].map((input) => input.value);
+      const selections = [...container.querySelectorAll('.time-edit')].map((form) =>
+        [form.elements.hours.value, form.elements.minutes.value]);
       container.replaceChildren();
       for (const [index, [module, info]] of Object.entries(MODULES).entries()) {
         const card = document.createElement('article');
@@ -750,21 +869,23 @@
             <p class="muted schedule-empty" hidden>Nenhum horário adicionado.</p>
           </div>
           <form class="time-edit">
-            <label>Novo horário <input type="time" required></label>
+            <label>Hora <select name="hours" required><option value="">—</option>${scheduleHourOptions}</select></label>
+            <label>Minutos <select name="minutes" required><option value="">—</option><option value="00">00</option><option value="30">30</option></select></label>
             <button class="button" type="submit"><i class="fa-solid fa-plus" aria-hidden="true"></i> Adicionar horário</button>
           </form>`;
         const toggle = card.querySelector('input[type="checkbox"]');
-        const time = card.querySelector('input[type="time"]');
+        const form = card.querySelector('.time-edit');
+        const { hours: hourField, minutes: minuteField } = form.elements;
         const list = card.querySelector('ul');
-        const add = card.querySelector('form button');
+        const add = form.querySelector('button');
         const mode = card.querySelector('.schedule-mode');
         const track = card.querySelector('.schedule-track');
         const full = schedule?.times.length === MAX_SCHEDULE_TIMES;
         toggle.checked = Boolean(schedule?.enabled);
         toggle.disabled = !schedule || locked;
-        time.disabled = add.disabled = !schedule || locked || full;
-        time.value = inputs[index] || '';
-        time.addEventListener('input', () => time.setCustomValidity(''));
+        hourField.disabled = minuteField.disabled = add.disabled = !schedule || locked || full;
+        [hourField.value, minuteField.value] = selections[index] || ['', ''];
+        form.addEventListener('change', () => hourField.setCustomValidity(''));
         mode.textContent = !schedule ? 'Indisponível' : toggle.checked ? 'Ativa' : 'Pausada';
         card.querySelector('.schedule-timeline').hidden = !schedule;
         card.querySelector('.schedule-empty').hidden = !schedule || schedule.times.length > 0;
@@ -801,19 +922,20 @@
           item.append(slotTime, remove);
           list.append(item);
         }
-        card.querySelector('form').addEventListener('submit', (event) => {
+        form.addEventListener('submit', (event) => {
           event.preventDefault();
-          if (!schedule || this.writing() || schedule.times.length >= MAX_SCHEDULE_TIMES || !isTime(time.value)) return;
-          if (schedule.times.includes(time.value)) {
-            time.setCustomValidity('Este horário já está na agenda.');
-            time.reportValidity();
+          const time = hourField.value + ':' + minuteField.value;
+          if (!schedule || this.writing() || schedule.times.length >= MAX_SCHEDULE_TIMES || !isScheduleSlot(time)) return;
+          if (schedule.times.includes(time)) {
+            hourField.setCustomValidity('Este horário já está na agenda.');
+            hourField.reportValidity();
             return;
           }
-          schedule.times.push(time.value);
+          schedule.times.push(time);
           schedule.times.sort();
-          time.value = '';
+          form.reset();
           this.render();
-          const field = container.querySelectorAll('input[type="time"]')[index];
+          const field = container.querySelectorAll('.time-edit')[index].elements.hours;
           (field.disabled ? container.querySelectorAll('input[type="checkbox"]')[index] : field).focus();
         });
         container.append(card);
@@ -860,6 +982,7 @@
           <div class="config-actions">
             <p class="status-line config-status neutral" role="status"></p>
             <button class="button primary" type="submit">Salvar configuração</button>
+            <button class="button" type="submit" value="target-weight">Salvar peso-alvo</button>
           </div>`;
         form.querySelector('h2').append(MODULES[module].label);
         for (const group of CONFIG_GROUPS[module]) {
@@ -902,6 +1025,12 @@
         form.addEventListener('submit', (event) => {
           event.preventDefault();
           const values = this.read(form, module);
+          if (event.submitter?.value === 'target-weight') {
+            if (isFirmwareTargetWeight(values.target_weight_g)) {
+              command_service.send('set_feeding_config', { target_weight_g: values.target_weight_g }, { quiet: true });
+            }
+            return;
+          }
           if (!Object.keys(this.validate(module, values)).length) {
             command_service.send('set_' + module + '_config', values, { quiet: true });
           }
@@ -931,6 +1060,7 @@
         const hasErrors = Object.keys(errors).length > 0;
         const pending = command_service.pending('set_' + module + '_config');
         const same = confirmed && fields.every(([key]) => confirmed[key] === values[key]);
+        const sameTarget = confirmed && confirmed.target_weight_g === values.target_weight_g;
         for (const [key] of fields) {
           const input = form.elements[key];
           input.disabled = Boolean(pending);
@@ -943,10 +1073,13 @@
         const status = form.querySelector('.config-status');
         const message = hasErrors ? [errors.schema || 'Revise os campos destacados.', 'danger'] :
           pending ? [UIController.phase(pending), 'info'] : same ? ['Configuração confirmada pelo equipamento.', 'success'] :
+          sameTarget ? ['Peso-alvo confirmado pelo equipamento. Há outros campos a confirmar.', 'success'] :
           confirmed ? ['Alterações ainda não confirmadas.', 'warning'] :
           ['Valores de referência. O protocolo não consulta a configuração atual do Arduino.', 'neutral'];
         UIController.setStatus(status, ...message);
-        form.querySelector('button').disabled = !command_service.available() || Boolean(pending) || hasErrors;
+        const locked = !command_service.available() || Boolean(pending);
+        form.querySelector('button[value="target-weight"]').disabled = locked || !isFirmwareTargetWeight(values.target_weight_g);
+        form.querySelector('button.primary').disabled = locked || hasErrors;
       }
       this.equipment = equipment;
     }
@@ -1055,8 +1188,14 @@
     renderContainers({ food_bowl: food, water_bowl: water }) {
       const foodCard = $('food-bowl');
       const waterCard = $('water-bowl');
+      const targetWeight = AppState.equipment.confirmedConfig.feeding?.target_weight_g;
+      const hasTargetWeight = Number.isFinite(targetWeight) && targetWeight > 0;
+      const limit = targetWeight / 5;
+      // Evita um aviso no próprio limiar por arredondamento de ponto flutuante.
+      const foodLow = hasTargetWeight && food?.weight_g < limit - limit * Number.EPSILON;
       const low = water?.level_state === 'low';
-      this.readingBadge(foodCard, food, 'Leitura válida', 'success');
+      const foodText = !hasTargetWeight ? 'Peso-alvo não confirmado' : foodLow ? 'Nível baixo' : 'Leitura válida';
+      this.readingBadge(foodCard, food, foodText, !hasTargetWeight ? 'neutral' : foodLow ? 'warning' : 'success');
       this.readingBadge(waterCard, water, 'Leitura da boia', low ? 'warning' : 'success');
       foodCard.querySelector('.reading-value').textContent = food?.valid ? numberFormat.format(food.weight_g) + ' g' : '—';
       const waterValue = waterCard.querySelector('.reading-value');
@@ -1070,7 +1209,8 @@
       $('connect-label').textContent = AppState.connection === 'connecting' ? 'Conectando ao EMQX…' : 'Conectar à gaiola';
       if (!AppState.signedIn) return;
       const simulated = Boolean(diagnostics.active?.());
-      const { equipment, connection, settings, unread } = AppState;
+      const { equipment, connection, settings, history } = AppState;
+      const unread = history.filter((entry) => entry.unread).length;
       const connectionLabel = {
         online: ['Conectado ao EMQX', 'success', 'link'],
         reconnecting: ['Reconectando…', 'warning', 'hourglass-half'],
@@ -1222,7 +1362,6 @@
       AppState.settings = null;
       AppState.equipment = equipmentState();
       AppState.history = [];
-      AppState.unread = 0;
       diagnostics.reset?.();
       ModalService.clear();
       if ($('events-dialog').open) $('events-dialog').close();
@@ -1290,7 +1429,7 @@
       });
       for (const button of document.querySelectorAll('[data-open-events]')) {
         button.addEventListener('click', () => {
-          AppState.unread = 0;
+          for (const entry of AppState.history) entry.unread = false;
           event_handler.renderHistory();
           $('events-dialog').showModal();
           this.render();
@@ -1351,6 +1490,7 @@
           watering: { enabled: true, times: ['08:00', '18:00'] }
         };
       } else {
+        AppState.equipment.eventScope.closed = true;
         AppState.equipment = this.realEquipment;
         this.realEquipment = null;
         this.pumpFailure = false;
@@ -1359,7 +1499,7 @@
         AppState.equipment.status = {};
       }
       UIController.render();
-      if (command_service.available()) mqtt_client.initialize();
+      //if (command_service.available()) mqtt_client.initialize();
       if (!enabled) event_handler.review();
     },
     emit(type, fields) {
@@ -1466,7 +1606,9 @@
         case 'remove_schedule':
           this.schedule[data.module].times = this.schedule[data.module].times.filter((time) => time !== data.time);
           return { ...data, removed: true };
-        case 'set_feeding_config': return { configuration_updated: true };
+        case 'set_feeding_config':
+          return Object.keys(data).length === 1 ? { configuration_updated: true, target_weight_g: data.target_weight_g } :
+            { configuration_updated: true };
         case 'sync_time': return { rtc_updated: true, datetime: data.datetime };
       }
     },
@@ -1508,6 +1650,14 @@
           telemetry.watering.bowl_level = 'low';
           this.emit('telemetry', { timestamp, data: telemetry });
           if (!alreadyLow) this.emit('event', { timestamp, data: { name: 'container_level_low', container: 'water_bowl', level_state: 'low' } });
+          break;
+        }
+        case 'food-bowl-low': {
+          const targetWeight = AppState.equipment.confirmedConfig.feeding?.target_weight_g ?? 20;
+          const weight_g = targetWeight * 0.195;
+          telemetry.containers.food_bowl = { weight_g, valid: true };
+          telemetry.feeding.bowl_weight_g = weight_g;
+          this.emit('telemetry', { timestamp, data: telemetry });
           break;
         }
         case 'bowls-invalid':
@@ -1557,12 +1707,15 @@
     const emptyActions = ['get_status', 'get_telemetry', 'get_schedule', 'get_system_info', 'feed_manual', 'water_manual', 'ack_cleaning'];
     let payload = null;
     if (emptyActions.includes(action) && !Object.keys(data).length) payload = data;
-    if (action === 'set_schedule') payload = ScheduleManager.normalize(data);
+    if (action === 'set_schedule') payload = data;
     if (action === 'remove_schedule' && Object.keys(data).length === 2 && owns(MODULES, data.module) && isTime(data.time)) payload = data;
     if (action === 'sync_time' && Object.keys(data).length === 1 && typeof data.datetime === 'string' &&
       /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(data.datetime) && Number.isFinite(Date.parse(data.datetime))) payload = data;
     for (const module of Object.keys(CONFIG_FIELDS)) {
       if (action === 'set_' + module + '_config' && !Object.keys(ConfigManager.validate(module, data)).length) payload = data;
+    }
+    if (action === 'set_feeding_config' && Object.keys(data).length === 1 && isFirmwareTargetWeight(data.target_weight_g)) {
+      payload = data;
     }
     if (!payload) {
       ToastService.show('Comando inválido', 'Use uma ação do protocolo v1.0 e os parâmetros previstos para ela.', 'danger');
