@@ -413,7 +413,7 @@ Horários ilustrativos. Quantidade máxima, ordenação e persistência deverão
 }
 ```
 
-O Arduino valida condições de segurança antes do acionamento. O ciclo deverá respeitar limites de tempo e leituras dos sensores. O servo não poderá permanecer acionado indefinidamente em caso de falha. Recusa anterior ao início será comunicada por ACK `rejected`.
+O painel Web bloqueia o envio de `feed_manual` quando o reservatório está em nível baixo ou quando a disponibilidade de ração no reservatório ou o peso no pote não podem ser confirmados por leituras válidas e atuais. O Arduino valida as condições de segurança antes do acionamento. O ciclo deverá respeitar limites de tempo e leituras dos sensores. O servo não poderá permanecer acionado indefinidamente em caso de falha. Recusa anterior ao início será comunicada por ACK `rejected`.
 
 ### 9.2. `water_manual` — hidratação manual
 
@@ -542,7 +542,15 @@ O Arduino valida formato, quantidade máxima, duplicidade e demais regras. A alt
 ```json
 {
   "v":"1.0","type":"command","id":"cmd-022","source":"web","action":"set_feeding_config",
-  "data":{"target_weight_g":20.0,"max_duration_ms":5000}
+  "data":{
+    "target_weight_g":20.0,
+    "max_duration_ms":5000,
+    "reference_distance_cm":25.0,
+    "useful_height_cm":20.0,
+    "low_threshold_percent":20.0,
+    "full_threshold_percent":95.0,
+    "cleaning_interval_seconds":172800
+  }
 }
 ```
 
@@ -561,7 +569,7 @@ O Arduino valida formato, quantidade máxima, duplicidade e demais regras. A alt
 }
 ```
 
-Os campos são exemplos, não parâmetros aprovados. Os limites definitivos deverão refletir a configuração real do módulo e ser validados no Arduino.
+O intervalo de limpeza via JSON usa `cleaning_interval_seconds`, em segundos inteiros. O valor de 172800 segundos corresponde a 48 horas. Os limites operacionais definitivos e os demais campos continuam sujeitos à configuração real do módulo e à validação no Arduino.
 
 ### 10.4. `set_watering_config` — configuração de hidratação
 
