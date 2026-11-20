@@ -8,21 +8,32 @@
   const STORAGE_KEY = 'smartbird.connection.v1';
   const MAX_PAYLOAD_BYTES = 1024;
   const MAX_SCHEDULE_TIMES = 4;
+  const SECONDS_PER_HOUR = 3600;
+  const MAX_CLEANING_INTERVAL_SECONDS = 0xFFFFFFFF;
   const MODULES = {
     feeding: { label: 'Alimentação', action: 'feed_manual', button: 'feed', caption: 'Alimentar agora' },
     watering: { label: 'Hidratação', action: 'water_manual', button: 'water', caption: 'Repor água agora' }
   };
-  const CONFIG_FIELDS = {
+  const CONFIG_GROUPS = {
     feeding: [
-      ['target_weight_g', 'Peso-alvo (g)', 20],
-      ['max_duration_ms', 'Tempo máximo do servo (ms)', 5000, 'integer'],
-      ['reference_distance_cm', 'Distância de referência (cm)', 25],
-      ['useful_height_cm', 'Altura útil (cm)', 20],
-      ['low_threshold_percent', 'Limiar de nível baixo (%)', 20, 'percent'],
-      ['full_threshold_percent', 'Limiar de nível cheio (%)', 95, 'percent'],
-      ['cleaning_interval_hours', 'Intervalo de limpeza (h)', 48, 'integer']
+      { title: 'Dosagem', fields: [
+        ['target_weight_g', 'Peso-alvo (g)', 20],
+        ['max_duration_ms', 'Tempo máximo do servo (ms)', 5000, 'integer']
+      ] },
+      { title: 'Calibração do reservatório', fields: [
+        ['reference_distance_cm', 'Distância de referência (cm)', 25],
+        ['useful_height_cm', 'Altura útil (cm)', 20],
+        ['low_threshold_percent', 'Limiar de nível baixo (%)', 20, 'percent'],
+        ['full_threshold_percent', 'Limiar de nível cheio (%)', 95, 'percent']
+      ] },
+      { title: 'Higienização', fields: [
+        ['cleaning_interval_seconds', 'Intervalo de limpeza (h)', 48 * SECONDS_PER_HOUR, 'integer', SECONDS_PER_HOUR]
+      ] }
     ]
   };
+  const CONFIG_FIELDS = Object.fromEntries(Object.entries(CONFIG_GROUPS).map(
+    ([module, groups]) => [module, groups.flatMap((group) => group.fields)]
+  ));
   const ERROR_MESSAGES = {
     INVALID_JSON: 'O pacote recebido contém JSON inválido.',
     INVALID_MESSAGE: 'A estrutura da mensagem é inválida.',
@@ -253,6 +264,22 @@
   };
 
   // command_service
+  function feedingSafetyError({ reservoirs, containers }) {
+    const reservoir = reservoirs.food;
+    const bowl = containers.food_bowl;
+    let message;
+    if (reservoir?.valid !== true || reservoir.stale) {
+      message = 'A leitura do reservatório de ração está indisponível ou desatualizada.';
+    } else if (reservoir.low === true || reservoir.level_percent === 0) {
+      message = 'O reservatório de ração está em nível baixo. Reabasteça antes de alimentar.';
+    } else if (reservoir.low !== false) {
+      message = 'O nível do reservatório de ração ainda não foi confirmado.';
+    } else if (bowl?.valid !== true || bowl.stale) {
+      message = 'A leitura do peso do pote de ração está indisponível ou desatualizada.';
+    }
+    return message ? { code: 'SAFETY_BLOCK', message } : null;
+  }
+
   let commandCounter = BigInt(Date.now()) * 2n ** 32n + BigInt(crypto.getRandomValues(new Uint32Array(1))[0]);
   const command_service = {
     available() {
@@ -273,6 +300,13 @@
         return false;
       }
       if (['feed_manual', 'water_manual'].includes(action) && !this.canActuate(action)) return false;
+      if (action === 'feed_manual') {
+        const error = feedingSafetyError(AppState.equipment);
+        if (error) {
+          response_handler.showError('Alimentação bloqueada', error);
+          return false;
+        }
+      }
       if (scheduleActions.includes(action) && scheduleActions.some((name) => this.pending(name))) {
         if (!quiet) ToastService.show('Agenda em atualização', 'Aguarde a confirmação do comando anterior.', 'warning');
         return false;
@@ -632,6 +666,7 @@
   // ScheduleManager
   const ScheduleManager = {
     lastRender: '',
+    renderedDraft: null,
     normalize(data) {
       if (!isRecord(data) || Object.keys(data).length !== 2) return null;
       const schedule = {};
@@ -684,8 +719,9 @@
         ['Aguardando a agenda do equipamento.', 'neutral'];
       UIController.setStatus($('schedule-status'), ...status);
       const signature = JSON.stringify([draft, locked]);
-      if (signature === this.lastRender) return;
+      if (signature === this.lastRender && draft === this.renderedDraft) return;
       this.lastRender = signature;
+      this.renderedDraft = draft;
       const container = $('schedule-panels');
       const inputs = [...container.querySelectorAll('input[type="time"]')].map((input) => input.value);
       container.replaceChildren();
@@ -694,29 +730,63 @@
         const schedule = draft?.[module];
         card.className = 'surface panel schedule-panel';
         card.dataset.category = module === 'feeding' ? 'food' : 'water';
-        card.innerHTML = '<h2 class="panel-title"><span class="icon-box"><i class="fa-regular fa-calendar" aria-hidden="true"></i></span></h2><label class="check switch"><input type="checkbox"> Rotina automática</label>' +
-          '<p class="muted schedule-count"></p><ul class="time-list"></ul>' +
-          '<form class="time-edit"><label>Novo horário <input type="time" required></label><button class="button" type="submit">Adicionar horário</button></form>';
-        card.querySelector('h2').append('Agenda de ' + info.label.toLowerCase());
+        card.innerHTML = `
+          <header class="schedule-heading">
+            <div class="card-heading">
+              <span class="icon-box"><i class="fa-solid fa-${module === 'feeding' ? 'seedling' : 'faucet-drip'}" aria-hidden="true"></i></span>
+              <div><h2>${info.label}</h2><p class="muted schedule-count"></p></div>
+            </div>
+            <label class="check switch schedule-switch">
+              <span class="schedule-mode"></span>
+              <input type="checkbox" role="switch" aria-label="Rotina automática de ${info.label.toLowerCase()}">
+            </label>
+          </header>
+          <div class="schedule-timeline" aria-hidden="true" hidden>
+            <div class="schedule-track"></div>
+            <div class="schedule-ticks"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>
+          </div>
+          <div class="schedule-slots">
+            <ul class="time-list" aria-label="Horários de ${info.label.toLowerCase()}"></ul>
+            <p class="muted schedule-empty" hidden>Nenhum horário adicionado.</p>
+          </div>
+          <form class="time-edit">
+            <label>Novo horário <input type="time" required></label>
+            <button class="button" type="submit"><i class="fa-solid fa-plus" aria-hidden="true"></i> Adicionar horário</button>
+          </form>`;
         const toggle = card.querySelector('input[type="checkbox"]');
         const time = card.querySelector('input[type="time"]');
         const list = card.querySelector('ul');
         const add = card.querySelector('form button');
+        const mode = card.querySelector('.schedule-mode');
+        const track = card.querySelector('.schedule-track');
         const full = schedule?.times.length === MAX_SCHEDULE_TIMES;
         toggle.checked = Boolean(schedule?.enabled);
         toggle.disabled = !schedule || locked;
         time.disabled = add.disabled = !schedule || locked || full;
         time.value = inputs[index] || '';
         time.addEventListener('input', () => time.setCustomValidity(''));
+        mode.textContent = !schedule ? 'Indisponível' : toggle.checked ? 'Ativa' : 'Pausada';
+        card.querySelector('.schedule-timeline').hidden = !schedule;
+        card.querySelector('.schedule-empty').hidden = !schedule || schedule.times.length > 0;
         card.querySelector('.schedule-count').textContent = schedule ?
-          schedule.times.length + ' / 4 horários configurados' + (full ? ' · Limite atingido' : '') : 'Agenda ainda não recebida';
+          schedule.times.length + ' de ' + MAX_SCHEDULE_TIMES + ' horários' + (full ? ' · Limite atingido' : '') : 'Agenda ainda não recebida';
         toggle.addEventListener('change', () => {
           schedule.enabled = toggle.checked;
+          mode.textContent = toggle.checked ? 'Ativa' : 'Pausada';
           this.lastRender = JSON.stringify([draft, locked]);
           this.render();
         });
         for (const slot of schedule?.times || []) {
+          const [hours, minutes] = slot.split(':').map(Number);
+          const mark = document.createElement('span');
+          mark.className = 'schedule-mark';
+          mark.style.setProperty('--slot-position', ((hours * 60 + minutes) / 1440 * 100) + '%');
+          mark.title = slot;
+          track.append(mark);
           const item = document.createElement('li');
+          const slotTime = document.createElement('time');
+          slotTime.dateTime = slot;
+          slotTime.textContent = slot;
           const remove = document.createElement('button');
           remove.type = 'button';
           remove.className = 'icon-button';
@@ -728,7 +798,7 @@
             this.render();
             container.querySelectorAll('input[type="checkbox"]')[index].focus();
           });
-          item.append(slot, remove);
+          item.append(slotTime, remove);
           list.append(item);
         }
         card.querySelector('form').addEventListener('submit', (event) => {
@@ -771,6 +841,10 @@
       if (values.useful_height_cm > values.reference_distance_cm) {
         errors.useful_height_cm = 'A altura útil deve ser menor ou igual à distância de referência.';
       }
+      if (values.cleaning_interval_seconds > MAX_CLEANING_INTERVAL_SECONDS) {
+        errors.cleaning_interval_seconds = 'O intervalo de limpeza excede o limite de ' +
+          numberFormat.format(MAX_CLEANING_INTERVAL_SECONDS) + ' segundos.';
+      }
       return errors;
     },
     mount() {
@@ -780,24 +854,47 @@
         form.className = 'surface panel config-panel';
         form.dataset.category = 'food';
         form.noValidate = true;
-        form.innerHTML = '<h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-sliders" aria-hidden="true"></i></span></h2><p class="status-line config-status neutral" role="status"></p><div class="field-grid"></div>' +
-          '<p class="error-text config-errors" role="status" hidden></p><button class="button primary" type="submit">Salvar configuração</button>';
+        form.innerHTML = `
+          <h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-seedling" aria-hidden="true"></i></span></h2>
+          <div class="config-fields"></div>
+          <div class="config-actions">
+            <p class="status-line config-status neutral" role="status"></p>
+            <button class="button primary" type="submit">Salvar configuração</button>
+          </div>`;
         form.querySelector('h2').append(MODULES[module].label);
-        for (const [key, caption, initial, type] of fields) {
-          const label = document.createElement('label');
-          const input = document.createElement('input');
-          label.append(caption, input);
-          input.type = 'number';
-          input.min = '0';
-          input.step = type === 'integer' ? '1' : 'any';
-          if (type === 'percent') input.max = '100';
-          input.name = key;
-          input.defaultValue = String(initial);
-          input.required = true;
-          input.setAttribute('aria-describedby', module + '-config-errors');
-          form.querySelector('.field-grid').append(label);
+        for (const group of CONFIG_GROUPS[module]) {
+          const fieldset = document.createElement('fieldset');
+          fieldset.className = 'config-group';
+          const legend = document.createElement('legend');
+          legend.textContent = group.title;
+          const grid = document.createElement('div');
+          grid.className = 'field-grid';
+          for (const [key, caption, initial, type, scale = 1] of group.fields) {
+            const field = document.createElement('div');
+            field.className = 'config-field';
+            const label = document.createElement('label');
+            const input = document.createElement('input');
+            input.id = module + '-' + key;
+            label.htmlFor = input.id;
+            label.textContent = caption;
+            input.type = 'number';
+            input.min = '0';
+            input.step = type === 'integer' && scale === 1 ? '1' : 'any';
+            if (type === 'percent') input.max = '100';
+            input.name = key;
+            input.defaultValue = String(initial / scale);
+            input.required = true;
+            const error = document.createElement('p');
+            error.className = 'error-text';
+            error.id = input.id + '-error';
+            error.hidden = true;
+            input.setAttribute('aria-describedby', error.id);
+            field.append(label, input, error);
+            grid.append(field);
+          }
+          fieldset.append(legend, grid);
+          form.querySelector('.config-fields').append(fieldset);
         }
-        form.querySelector('.config-errors').id = module + '-config-errors';
         form.addEventListener('input', () => {
           AppState.equipment.configDrafts[module] = Object.fromEntries(fields.map(([key]) => [key, form.elements[key].value]));
           this.render();
@@ -805,13 +902,18 @@
         form.addEventListener('submit', (event) => {
           event.preventDefault();
           const values = this.read(form, module);
-          if (!Object.keys(this.validate(module, values)).length) command_service.send('set_' + module + '_config', values);
+          if (!Object.keys(this.validate(module, values)).length) {
+            command_service.send('set_' + module + '_config', values, { quiet: true });
+          }
         });
         $('config-panels').prepend(form);
       }
     },
     read(form, module) {
-      return Object.fromEntries(CONFIG_FIELDS[module].map(([key]) => [key, form.elements[key].valueAsNumber]));
+      return Object.fromEntries(CONFIG_FIELDS[module].map(([key, , , , scale = 1]) => {
+        const value = form.elements[key].valueAsNumber;
+        return [key, scale !== 1 && value >= 0 ? Math.round(value * scale) : value];
+      }));
     },
     render() {
       const equipment = AppState.equipment;
@@ -820,26 +922,31 @@
         const draft = equipment.configDrafts[module];
         const confirmed = equipment.confirmedConfig[module];
         if (this.equipment !== equipment) {
-          for (const [key, , initial] of fields) form.elements[key].value = draft?.[key] ?? confirmed?.[key] ?? initial;
+          for (const [key, , initial, , scale = 1] of fields) {
+            form.elements[key].value = draft?.[key] ?? (confirmed?.[key] ?? initial) / scale;
+          }
         }
         const values = this.read(form, module);
         const errors = this.validate(module, values);
+        const hasErrors = Object.keys(errors).length > 0;
         const pending = command_service.pending('set_' + module + '_config');
         const same = confirmed && fields.every(([key]) => confirmed[key] === values[key]);
         for (const [key] of fields) {
           const input = form.elements[key];
           input.disabled = Boolean(pending);
           input.setAttribute('aria-invalid', String(Boolean(errors[key])));
+          const error = $(input.id + '-error');
+          const errorMessage = errors[key] || '';
+          if (error.textContent !== errorMessage) error.textContent = errorMessage;
+          error.hidden = !errorMessage;
         }
-        const errorText = form.querySelector('.config-errors');
-        errorText.textContent = Object.values(errors).join(' ');
-        errorText.hidden = !errorText.textContent;
         const status = form.querySelector('.config-status');
-        const message = pending ? [UIController.phase(pending), 'info'] : same ? ['Configuração confirmada pelo equipamento.', 'success'] :
+        const message = hasErrors ? [errors.schema || 'Revise os campos destacados.', 'danger'] :
+          pending ? [UIController.phase(pending), 'info'] : same ? ['Configuração confirmada pelo equipamento.', 'success'] :
           confirmed ? ['Alterações ainda não confirmadas.', 'warning'] :
           ['Valores de referência. O protocolo não consulta a configuração atual do Arduino.', 'neutral'];
         UIController.setStatus(status, ...message);
-        form.querySelector('button').disabled = !command_service.available() || Boolean(pending) || !errorText.hidden;
+        form.querySelector('button').disabled = !command_service.available() || Boolean(pending) || hasErrors;
       }
       this.equipment = equipment;
     }
@@ -893,12 +1000,27 @@
         article.id = 'reservoir-' + key;
         article.className = 'surface measurement reservoir';
         article.dataset.category = key;
-        article.innerHTML = '<div class="reservoir-details"><span class="icon-box">' +
-          '<i class="fa-solid fa-' + icon + '" aria-hidden="true"></i></span><div><h3>' + name + '</h3><span class="badge" role="status"></span></div>' +
-          '<p class="distance"></p></div>' +
-          '<div class="gauge"><svg viewBox="0 0 120 120" aria-hidden="true">' +
-          '<circle class="track" cx="60" cy="60" r="51"></circle><circle class="level" cx="60" cy="60" r="51" pathLength="100"></circle>' +
-          '</svg><strong></strong></div>';
+        article.innerHTML = `
+          <div class="reservoir-details">
+            <span class="icon-box"><i class="fa-solid fa-${icon}" aria-hidden="true"></i></span>
+            <div><h3>${name}</h3><span class="badge" role="status"></span></div>
+          </div>
+          <div class="gauge">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="track" cx="60" cy="60" r="51"></circle>
+              <circle class="level" cx="60" cy="60" r="51" pathLength="100"></circle>
+            </svg>
+            <strong></strong>
+          </div>
+          <details class="reading-disclosure">
+            <summary class="reading-toggle" aria-label="Detalhes da leitura do ${name.toLowerCase()}">
+              Detalhes da leitura <span class="reading-chevron" aria-hidden="true"></span>
+            </summary>
+            <dl class="reading-details">
+              <div><dt>Sensor</dt><dd>Ultrassônico</dd></div>
+              <div><dt>Distância medida</dt><dd class="reading-distance">Indisponível</dd></div>
+            </dl>
+          </details>`;
         $('reservoirs').append(article);
       }
     },
@@ -914,8 +1036,8 @@
       arc.setAttribute('visibility', valid && level > 0 ? 'visible' : 'hidden');
       arc.setAttribute('stroke-dasharray', level + ' 100');
       article.querySelector('.gauge strong').textContent = valid ? numberFormat.format(level) + '%' : '—';
-      article.querySelector('.distance').textContent = valid && reading.distance_cm !== undefined ?
-        'Distância medida · ' + numberFormat.format(reading.distance_cm) + ' cm' : 'Distância indisponível';
+      article.querySelector('.reading-distance').textContent = valid && reading.distance_cm !== undefined ?
+        numberFormat.format(reading.distance_cm) + ' cm' : 'Indisponível';
     },
     readingBadge(article, reading, text, tone) {
       if (!reading) {
@@ -975,8 +1097,10 @@
         this.setStatus($(key + '-state'), ...(owns(STATUS_LABELS, state) ? STATUS_LABELS[state] : ['Aguardando status', 'neutral']));
       }
       const cleaning = equipment.cleaningDue;
-      const interval = equipment.confirmedConfig.feeding?.cleaning_interval_hours;
-      const cleaningText = cleaning === true ? (interval == null ? 'Limpeza necessária · Prazo atingido' : 'Limpeza necessária · Prazo de ' + interval + ' h atingido') :
+      const interval = equipment.confirmedConfig.feeding?.cleaning_interval_seconds;
+      const intervalLabel = interval % SECONDS_PER_HOUR === 0 ?
+        numberFormat.format(interval / SECONDS_PER_HOUR) + ' h' : numberFormat.format(interval) + ' s';
+      const cleaningText = cleaning === true ? (interval == null ? 'Limpeza necessária · Prazo atingido' : 'Limpeza necessária · Prazo de ' + intervalLabel + ' atingido') :
         cleaning === false ? 'Higienização em dia' : 'Aguardando status';
       this.setStatus($('cleaning-state'), cleaningText, cleaning === true ? 'warning' : cleaning === false ? 'success' : 'neutral');
       this.reservoir('food', equipment.reservoirs.food);
@@ -1142,9 +1266,9 @@
       $('sync').addEventListener('click', () => time_service.sync());
       $('cleaning').addEventListener('click', () => command_service.send('ack_cleaning'));
       for (const info of Object.values(MODULES)) $(info.button).addEventListener('click', () => this.confirmManual(info.action));
-      $('load-schedule').addEventListener('click', () => command_service.send('get_schedule'));
+      $('load-schedule').addEventListener('click', () => command_service.send('get_schedule', {}, { quiet: true }));
       $('save-schedule').addEventListener('click', () => {
-        if (!$('save-schedule').disabled) command_service.send('set_schedule', AppState.equipment.draft);
+        if (!$('save-schedule').disabled) command_service.send('set_schedule', AppState.equipment.draft, { quiet: true });
       });
       $('discard-schedule').addEventListener('click', () => {
         if (ScheduleManager.writing() || !AppState.equipment.schedule) return;
@@ -1278,10 +1402,13 @@
     },
     send(command) {
       const watering = command.action === 'water_manual';
+      const feeding = command.action === 'feed_manual';
       this.after(400, () => {
         if (!pendingCommands.has(command.id)) return;
         const telemetry = watering ? this.telemetry() : null;
-        const error = watering && this.wateringError(telemetry, true);
+        let error = null;
+        if (watering) error = this.wateringError(telemetry, true);
+        if (feeding) error = feedingSafetyError(AppState.equipment);
         if (error) {
           this.emit('ack', { id: command.id, status: 'rejected', error });
           return;

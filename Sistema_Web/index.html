@@ -151,30 +151,43 @@
       </section>
 
       <section id="view-schedules" class="view" aria-labelledby="schedules-title" hidden>
-        <div class="view-head"><div><h1 id="schedules-title" tabindex="-1">Agendamentos</h1><p>Programe até quatro horários por módulo.</p></div></div>
+        <div class="view-head">
+          <div><h1 id="schedules-title" tabindex="-1">Agendamentos</h1><p>Programe até quatro horários diários por módulo.</p></div>
+          <button id="load-schedule" class="button" type="button"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Consultar agenda</button>
+        </div>
         <div id="schedule-panels" class="card-grid"></div>
         <div class="section-actions schedule-actions">
           <p id="schedule-status" class="status-line neutral" role="status"></p>
           <button id="discard-schedule" class="button" type="button" hidden>Descartar rascunho</button>
-          <button id="load-schedule" class="button" type="button">Consultar agenda</button>
           <button id="save-schedule" class="button primary" type="button">Salvar alterações</button>
         </div>
       </section>
 
       <section id="view-settings" class="view" aria-labelledby="settings-title" hidden>
-        <div class="view-head"><div><h1 id="settings-title" tabindex="-1">Configurações</h1><p>Parâmetros do equipamento e referência de calibração.</p></div></div>
-        <div id="config-panels" class="card-grid">
-          <article class="surface panel config-panel" data-category="water">
-            <h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-faucet-drip" aria-hidden="true"></i></span>Hidratação</h2>
-            <p>A boia indica nível baixo ou adequado no bebedouro. A disponibilidade de água para a bomba é verificada no reservatório de origem.</p>
-            <p class="muted">O firmware de hidratação define um limite de 15 segundos de bombeamento contínuo. A configuração de hidratação pela Web está pendente no protocolo.</p>
-          </article>
+        <div class="view-head"><div><h1 id="settings-title" tabindex="-1">Configurações</h1><p>Ajuste a alimentação e consulte os parâmetros da hidratação.</p></div></div>
+        <div id="config-panels" class="settings-grid">
+          <aside class="settings-reference" aria-label="Referência do equipamento">
+            <article class="surface panel config-panel" data-category="water">
+              <h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-faucet-drip" aria-hidden="true"></i></span>Hidratação</h2>
+              <dl class="settings-facts">
+                <div><dt>Bebedouro</dt><dd>Boia com leitura de nível baixo ou adequado</dd></div>
+                <div><dt>Reservatório de origem</dt><dd>Verifica a água disponível para a bomba</dd></div>
+                <div><dt>Bombeamento contínuo</dt><dd>Até 15 segundos</dd></div>
+              </dl>
+              <p class="muted settings-note">A configuração de hidratação pela Web está pendente no protocolo.</p>
+            </article>
+            <details class="surface config-reference">
+              <summary class="config-reference-toggle">
+                <span class="panel-title"><i class="fa-solid fa-ruler-vertical" aria-hidden="true"></i> Cálculo ultrassônico</span>
+                <span class="reading-chevron" aria-hidden="true"></span>
+              </summary>
+              <div class="config-reference-content">
+                <code>alturaConteudo = distanciaReferencia − distanciaMedida</code>
+                <code>percentualNivel = (alturaConteudo / alturaUtil) × 100</code>
+              </div>
+            </details>
+          </aside>
         </div>
-        <article class="surface formula" data-category="technical">
-          <h2 class="panel-title"><span class="icon-box"><i class="fa-solid fa-ruler-vertical" aria-hidden="true"></i></span>Cálculo ultrassônico</h2>
-          <code>alturaConteudo = distanciaReferencia − distanciaMedida</code>
-          <code>percentualNivel = (alturaConteudo / alturaUtil) × 100</code>
-        </article>
       </section>
 
       <!-- === INÍCIO DO MÓDULO DE TESTES E SIMULAÇÃO (PODE SER REMOVIDO EM PRODUÇÃO) === -->
