@@ -8,7 +8,7 @@
 // 0 = Serial1 (ESP8266, 9600 baud)
 // 1 = Serial USB (Monitor Serial, 115200 baud)
 
-#define SMARTBIRD_COMUNICACAO_USB 1
+#define SMARTBIRD_COMUNICACAO_USB 0
 
 // Limite máximo de uma mensagem.
 constexpr size_t MAX_BYTES_MENSAGEM = 1024;

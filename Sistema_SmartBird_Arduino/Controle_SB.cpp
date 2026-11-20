@@ -167,9 +167,23 @@ void atualizarControle() {
     if (!controleInicializado) return;
 
     char mensagem[TAMANHO_BUFFER_MENSAGEM];
-    if (receberMensagem(mensagem, sizeof(mensagem))) {
-        processarMensagem(mensagem, dados);
-    }
+
+if (receberMensagem(mensagem, sizeof(mensagem))) {
+
+    Serial.println();
+    Serial.println("[UART] Mensagem recebida:");
+    Serial.println(mensagem);
+
+    Serial.println("[PROTOCOLO] Encaminhando para processamento...");
+
+    processarMensagem(mensagem, dados);
+
+    Serial.println("[PROTOCOLO] Processamento finalizado.");
+}
+
+if (houveOverflowComunicacao()) {
+    Serial.println("[ERRO] Overflow na comunicacao!");
+}
 
     if (houveOverflowComunicacao()) {
 #if !SMARTBIRD_COMUNICACAO_USB

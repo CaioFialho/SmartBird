@@ -112,7 +112,16 @@ void enviarAck(const char* id, const char* status) {
     resposta["source"] = "arduino";
     resposta["status"] = status;
 
-    enviarDocumento(resposta);
+    Serial.print("[ACK] Tentando enviar: ");
+    Serial.println(status);
+
+    bool enviado = enviarDocumento(resposta);
+
+    if (enviado) {
+      Serial.println("[ACK] Mensagem encaminhada para comunicacao.");
+    } else {
+      Serial.println("[ERRO] Falha ao montar ou enviar ACK!");
+}
 }
 
 void enviarResponseDados(const char* id, JsonDocument& dados) {
@@ -607,6 +616,8 @@ void processarMensagem(
     DadosSistema& dados
 ) {
 
+    Serial.println("[PROTOCOLO] Iniciando analise da mensagem...");
+
     if (!mensagem || !*mensagem) {
         enviarErro(nullptr, "INVALID_MESSAGE", "Empty message");
         return;
@@ -618,15 +629,24 @@ void processarMensagem(
         deserializeJson(requisicao, mensagem);
 
     if (erroJson) {
-        enviarErro(nullptr, "INVALID_JSON", "JSON could not be parsed");
-        return;
+      Serial.println("[ERRO] JSON invalido!");
+      enviarErro(nullptr, "INVALID_JSON", "JSON could not be parsed");
+      return;
     }
+
+    Serial.println("[PROTOCOLO] JSON interpretado com sucesso.");
 
     const char* versao = requisicao["v"] | "";
     const char* tipo = requisicao["type"] | "";
     const char* id = requisicao["id"] | "";
     const char* origem = requisicao["source"] | "";
     const char* acao = requisicao["action"] | "";
+
+    Serial.print("[PROTOCOLO] ID: ");
+    Serial.println(id);
+
+    Serial.print("[PROTOCOLO] Acao: ");
+    Serial.println(acao);
 
     if (strcmp(versao, "1.0") != 0) {
         enviarErro(

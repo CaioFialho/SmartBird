@@ -19,7 +19,7 @@ void inicializarComunicacao() {
     // Não chamar Serial.begin() novamente aqui.
 #else
     // UART dedicada ao ESP8266.
-    Serial1.begin(9600);
+    Serial1.begin(4800);
 #endif
 
     indiceRecepcao = 0;
@@ -121,17 +121,34 @@ bool enviarMensagem(const char* mensagem) {
     }
 
 #if SMARTBIRD_COMUNICACAO_USB
+
+    Serial.println("[COMUNICACAO] Enviando pela USB...");
+
     Serial.write(
         reinterpret_cast<const uint8_t*>(mensagem),
         tamanho
     );
     Serial.write('\n');
+
 #else
+
+    Serial.println();
+    Serial.println("========== UART MEGA -> ESP8266 ==========");
+    Serial.println("[UART TX] Mensagem que sera enviada:");
+    Serial.println(mensagem);
+    Serial.print("[UART TX] Bytes: ");
+    Serial.println(tamanho);
+
     Serial1.write(
         reinterpret_cast<const uint8_t*>(mensagem),
         tamanho
     );
+
     Serial1.write('\n');
+
+    Serial.println("[UART TX] Transmissao solicitada.");
+    Serial.println("==========================================");
+
 #endif
 
     return true;
