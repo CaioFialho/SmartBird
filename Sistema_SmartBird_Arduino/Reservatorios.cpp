@@ -1,127 +1,82 @@
-
 #include <Arduino.h>
-
+#include <math.h>
 #include "Reservatorios.h"
 #include "Hardware_SB.h"
 
-// ==========================================
-// INICIALIZACAO DOS RESERVATORIOS
-// ==========================================
+namespace {
+constexpr unsigned long INTERVALO_LEITURA_MS = 2000UL;
+constexpr unsigned long TIMEOUT_ECHO_US = 25000UL;
+constexpr unsigned long INTERVALO_ANTICROSSTALK_MS = 60UL;
+unsigned long ultimaAtualizacaoMs = 0;
+
+float lerDistancia(uint8_t trig, uint8_t echo) {
+    digitalWrite(trig, LOW);
+    delayMicroseconds(3);
+    digitalWrite(trig, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trig, LOW);
+
+    const unsigned long duracao = pulseIn(echo, HIGH, TIMEOUT_ECHO_US);
+    if (duracao == 0) return -1.0f;
+
+    const float distancia = (duracao * 0.0343f) / 2.0f;
+    return isfinite(distancia) ? distancia : -1.0f;
+}
+
+void invalidarLeitura(Reservatorio& r) {
+    // Mantém a última medição como histórico, mas invalida sua confiabilidade.
+    // O consumidor deve sempre verificar leituraValida antes de usar nivelBaixo.
+    r.dados.leituraValida = false;
+}
+
+void processarLeitura(Reservatorio& r, float distancia) {
+    const float cheio = r.configuracao.distanciaNivelCheioCm;
+    const float vazio = r.configuracao.distanciaNivelVazioCm;
+    const float minimo = r.configuracao.nivelMinimoPercentual;
+
+    if (!isfinite(distancia) || distancia < 2.0f || distancia > 400.0f ||
+        !isfinite(cheio) || !isfinite(vazio) || !isfinite(minimo) ||
+        cheio <= 0.0f || vazio <= cheio || minimo < 0.0f || minimo > 100.0f) {
+        invalidarLeitura(r);
+        return;
+    }
+
+    float nivel = ((vazio - distancia) / (vazio - cheio)) * 100.0f;
+    nivel = constrain(nivel, 0.0f, 100.0f);
+
+    r.dados.distanciaSensorCm = distancia;
+    r.dados.nivelAtualPercentual = nivel;
+    r.dados.leituraValida = true;
+    r.dados.nivelBaixo = nivel <= minimo;
+}
+}
 
 void inicializarReservatorios() {
-
     pinMode(TRIG_ALIMENTO, OUTPUT);
     pinMode(ECHO_ALIMENTO, INPUT);
-
     pinMode(TRIG_AGUA, OUTPUT);
     pinMode(ECHO_AGUA, INPUT);
-
     digitalWrite(TRIG_ALIMENTO, LOW);
     digitalWrite(TRIG_AGUA, LOW);
+    ultimaAtualizacaoMs = 0;
 }
-
-// ==========================================
-// LEITURA DA DISTANCIA DOS SENSORES
-// ==========================================
-
-static float lerDistancia(uint8_t pinoTrig, uint8_t pinoEcho) {
-
-    digitalWrite(pinoTrig, LOW);
-    delayMicroseconds(2);
-
-    digitalWrite(pinoTrig, HIGH);
-    delayMicroseconds(10);
-
-    digitalWrite(pinoTrig, LOW);
-
-    unsigned long duracao = pulseIn(pinoEcho, HIGH, 30000UL);
-
-    if (duracao == 0) {
-        return -1.0;
-    }
-
-    float distancia = (duracao * 0.0343) / 2.0;
-
-    return distancia;
-}
-
-// ==========================================
-// PROCESSAMENTO DA LEITURA
-// ==========================================
-
-static void processarLeitura(Reservatorio& reservatorio, float distancia) {
-
-    // Verifica se a leitura do sensor e valida
-    if (distancia < 2.0 || distancia > 400.0) {
-        reservatorio.dados.leituraValida = false;
-        return;
-    }
-
-    // Recupera os valores de calibracao
-    float distanciaCheio =
-        reservatorio.configuracao.distanciaNivelCheioCm;
-
-    float distanciaVazio =
-        reservatorio.configuracao.distanciaNivelVazioCm;
-
-    float nivelMinimo =
-        reservatorio.configuracao.nivelMinimoPercentual;
-
-    // Verifica se a calibracao e valida
-    if (distanciaCheio <= 0 ||
-        distanciaVazio <= distanciaCheio ||
-        nivelMinimo < 0 ||
-        nivelMinimo > 100) {
-
-        reservatorio.dados.leituraValida = false;
-        return;
-    }
-
-    // Calcula o percentual de preenchimento
-    float nivel = ((distanciaVazio - distancia) /
-                  (distanciaVazio - distanciaCheio)) * 100.0;
-
-    // Limita o resultado entre 0% e 100%
-    nivel = constrain(nivel, 0.0, 100.0);
-
-    // Atualiza os dados do reservatorio
-    reservatorio.dados.distanciaSensorCm = distancia;
-    reservatorio.dados.nivelAtualPercentual = nivel;
-    reservatorio.dados.leituraValida = true;
-
-    // Identifica se o nivel esta baixo
-    reservatorio.dados.nivelBaixo =
-        nivel <= nivelMinimo;
-}
-
-// ==========================================
-// ATUALIZACAO DOS RESERVATORIOS
-// ==========================================
 
 void atualizarReservatorios(DadosSistema& dados) {
+    const unsigned long agora = millis();
+    if (ultimaAtualizacaoMs != 0 &&
+        agora - ultimaAtualizacaoMs < INTERVALO_LEITURA_MS) return;
 
-    // Leitura do reservatorio de alimento
-    float distanciaAlimento = lerDistancia(
-        TRIG_ALIMENTO,
-        ECHO_ALIMENTO
-    );
+    ultimaAtualizacaoMs = agora;
 
     processarLeitura(
         dados.reservatorioAlimento,
-        distanciaAlimento
+        lerDistancia(TRIG_ALIMENTO, ECHO_ALIMENTO)
     );
 
-    // Intervalo para evitar interferencia entre sensores
-    delay(60);
-
-    // Leitura do reservatorio de agua
-    float distanciaAgua = lerDistancia(
-        TRIG_AGUA,
-        ECHO_AGUA
-    );
+    delay(INTERVALO_ANTICROSSTALK_MS);
 
     processarLeitura(
         dados.reservatorioAgua,
-        distanciaAgua
+        lerDistancia(TRIG_AGUA, ECHO_AGUA)
     );
 }
