@@ -14,7 +14,20 @@ Este pacote contém a revisão dos módulos de firmware enviados para análise. 
 - `Manutencao.cpp/.h`: lembrete de limpeza.
 - `Comunicacao.cpp/.h`: transporte serial com mensagens terminadas em LF.
 - `Protocolo.cpp/.h`: interpretação das mensagens JSON.
+- `Interface.cpp/.h`: LCD, navegação, botões, LEDs e buzzer.
 - `Controle_SB.cpp/.h`: integração e ciclo principal.
+
+## Interface física implementada
+
+- LCD 16x2 I2C no endereço padrão `0x27` (SDA=20 e SCL=21 no Mega). Se o módulo usar `0x3F`, alterar o construtor do LCD em `Interface.cpp`.
+- Botões com `INPUT_PULLUP`: anterior=31, OK=32, próximo=33. Cada botão deve fechar contato com GND quando pressionado.
+- LEDs: sistema=34, ação=35, aviso=36, crítico=37. A ligação deve incluir resistor limitador em série com cada LED.
+- Buzzer no pino 38; terminal positivo no pino e negativo no GND. O código usa `tone()`; confirmar o tipo e a corrente do componente antes de ligar diretamente. Se necessário, usar transistor.
+- Os pinos 20/21 são compartilhados no barramento I2C entre LCD e RTC.
+
+A navegação principal percorre Home, Reservatórios, Potinhos, Próxima Ação, Manutenção e Conectividade. Na tela Próxima Ação, OK abre a edição das agendas; na tela Manutenção, OK abre a confirmação da limpeza. Na edição, `>` percorre os quatro espaços de horário, `<` volta entre etapas e ajusta o horário em passos de 30 minutos, e OK confirma. O LCD mostra um espaço de horário por vez para caber no formato 16x2.
+
+Os estados Wi-Fi e MQTT aparecem como `--` por enquanto: a ponte ESP8266 e o protocolo atualmente integrados não enviam esses dois estados ao Mega. Não exibir `OK` sem receber essa confirmação real.
 
 ## Dependências
 
@@ -23,6 +36,7 @@ Instalar no Arduino IDE:
 - HX711 (API compatível com a biblioteca bogde/HX711)
 - Servo (biblioteca padrão do Arduino)
 - RTClib (Adafruit)
+- LiquidCrystal_I2C (biblioteca compatível com `LiquidCrystal_I2C lcd(0x27, 16, 2)`)
 - Wire (biblioteca padrão)
 
 Placa selecionada: **Arduino Mega 2560**.
@@ -69,7 +83,8 @@ Para `Serial1` no Mega:
 4. O módulo HX711 não se recupera automaticamente se o conversor deixar de responder após a inicialização.
 5. Os valores de calibração, limites, ângulos do servo e polaridade do relé precisam ser testados no hardware real.
 6. O lembrete de limpeza considera a primeira limpeza pendente até que uma confirmação seja registrada.
-7. A interface física (LCD, botões, LEDs e buzzer) ainda não foi implementada neste pacote.
+7. A tela de conectividade ainda exibe `--`, pois a ponte ESP8266 atual não entrega estados Wi-Fi/MQTT ao Mega no contrato de comunicação revisado.
+8. A biblioteca `LiquidCrystal_I2C` deve ser instalada e seu endereço I2C confirmado no módulo real.
 8. A revisão foi feita por inspeção estática dos arquivos. Não foi possível executar compilação real porque o ambiente não possui Arduino CLI/toolchain nem as bibliotecas instaladas. Compile no Arduino IDE antes de conectar os atuadores.
 
 ## Teste inicial recomendado

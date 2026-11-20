@@ -8,6 +8,7 @@
 #include "Manutencao.h"
 #include "Comunicacao.h"
 #include "Protocolo.h"
+#include "Interface.h"
 
 static DadosSistema dados;
 static bool controleInicializado = false;
@@ -152,6 +153,7 @@ void inicializarControle() {
     if (!inicializarManutencao()) falhaInicializacao = true;
 
     inicializarComunicacao();
+    inicializarInterface(dados);
     controleInicializado = true;
 
     atualizarReservatorios(dados);
@@ -181,4 +183,5 @@ void atualizarControle() {
     atualizarManutencao(dados);
     processarAgendamentos();
     atualizarEstadoGeral();
+    atualizarInterface(dados);
 }

@@ -368,7 +368,8 @@ static void verificarAgenda(
       RegistroExecucao& registro = horario.registro;
 
       // Não sobrescreve uma execução ainda pendente
-      if (registro.estado == EstadoExecucao::PENDENTE || registro.estado == EstadoExecucao::EXECUTANDO) {
+      if (registro.estado == EstadoExecucao::PENDENTE ||
+          registro.estado == EstadoExecucao::EXECUTANDO) {
         continue;
       }
 
